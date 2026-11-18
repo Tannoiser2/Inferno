@@ -254,11 +254,7 @@ func _build() -> void:
 	br.add_child(close)
 	var vista := UI.button("Vista iniziale", 200, 42, 18)
 	vista.pressed.connect(func():
-		batt3d.yaw = 0.0
-		batt3d.pitch = 0.62
-		batt3d.dist = 4.1
-		batt3d.target = Vector3(0, 0, 0.15)
-		batt3d._cam())
+		batt3d.vista_iniziale())
 	br.add_child(vista)
 	battle_box.add_child(br)
 	# messaggi e finestre
