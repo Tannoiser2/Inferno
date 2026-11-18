@@ -305,9 +305,6 @@ func _settori() -> void:
 func _fortezza(l: String, d: float) -> void:
 	var t: String = D.LOCALI[l]["tipo"]
 	var path: String = MODELLI.get(t, MODELLI["castello"])
-	var pb := path.replace(".glb", "_b.glb")
-	if hash(l) % 2 == 1 and ResourceLoader.exists(pb):
-		path = pb
 	var sc: PackedScene = load(path)
 	var n: Node3D = sc.instantiate()
 	var ab := _aabb(n, Transform3D.IDENTITY)

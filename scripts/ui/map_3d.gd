@@ -310,17 +310,13 @@ func _costruisci_citta() -> void:
 	var scene := {}
 	for t in MODELLI:
 		scene[t] = load(MODELLI[t][0])
-		# la seconda versione del modello (<tipo>_b.glb), per varietà: metà delle località la usano
-		var pb: String = MODELLI[t][0].replace(".glb", "_b.glb")
-		if ResourceLoader.exists(pb):
-			scene[t + "_b"] = load(pb)
 	for l in D.LOCALI:
 		var info: Dictionary = D.LOCALI[l]
 		var t: String = info["tipo"]
 		if not scene.has(t):
 			_alto[l] = 0.0
 			continue
-		var n: Node3D = (scene[t + "_b"] if scene.has(t + "_b") and hash(l) % 2 == 1 else scene[t]).instantiate()
+		var n: Node3D = scene[t].instantiate()
 		var ab := _aabb(n, Transform3D.IDENTITY)
 		var k: float = MODELLI[t][1] / PX / maxf(ab.size.x, 0.001)
 		n.scale = Vector3.ONE * k
