@@ -1,0 +1,20 @@
+Miniature per la battaglia 3D (scripts/ui/battaglia_3d.gd).
+
+Un file .glb per tipo di unità, con questi nomi:
+  ritter.glb     Ritter (cavalleria pesante tedesca)
+  cav.glb        Cavalieri
+  berr.glb       Berrovieri
+  cl.glb         Cavalleria leggera
+  uia.glb        Uomini in Armi
+  arm.glb        Armigeri (anche balestrieri)
+  mil.glb        Milizia (arcieri)
+  vill.glb       Villici
+
+- La miniatura viene ridimensionata da sola (fanti più bassi dei cavalieri) e appoggiata sulla basetta
+  nel colore della fazione; deve guardare verso +Z (come esce da Meshy/Blender in glTF).
+- Se il modello ha animazioni, vengono usate quelle con nomi che contengono:
+  corsa / run / walk / gallop   (quando si muove o carica)
+  attacco / attack / shoot      (quando tira o colpisce)
+  morte / death / die           (quando va in rotta)
+  riposo / idle                 (fermo)
+- Se un file manca si usa la miniatura semplice disegnata dal gioco.

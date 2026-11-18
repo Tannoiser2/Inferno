@@ -19,6 +19,9 @@ Si gioca nel browser: https://tannoiser2.github.io/inferno/ (e dalla ludoteca ht
 - **Mappa 2D** (la mappa originale) e **Toscana in 3D** con città, castelli, mura e armate modellate;
   si passa dall'una all'altra in ogni momento. Pan, zoom e rotazione anche al tocco su iPad
   (un dito per spostare, due per pizzicare e ruotare).
+- **Battaglie in 3D**: si apre una mini mappa del luogo dello scontro con le miniature delle armate, che entrano in campo,
+  tirano frecce e quadrelli, caricano e cadono in rotta; nell'Assalto ci sono la fortezza, le mura e la Guarnigione.
+  Le miniature definitive vanno in `assets/miniature/` (vedi `assets/miniature/LEGGIMI.txt`).
 - **Avversario IA** in tre livelli (facile, normale, esperta) per una o entrambe le fazioni.
 - **Due persone sullo stesso dispositivo**: le scelte segrete si fanno passandosi il dispositivo.
 - **Online** con un amico (stanza con codice di 4 lettere) e **partite salvate** su Firebase

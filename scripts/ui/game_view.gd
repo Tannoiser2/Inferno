@@ -29,6 +29,9 @@ var wait_lbl: Label
 var fase_lbl: Label
 var battle_panel: PanelContainer
 var battle_box: VBoxContainer
+var batt3d: Control
+var batt_titolo: Label
+var batt_log: Label
 var banner: Label
 var pending := {}
 var _loc_opts := {}
@@ -224,6 +227,30 @@ func _build() -> void:
 	battle_box = VBoxContainer.new()
 	battle_box.add_theme_constant_override("separation", 6)
 	battle_panel.add_child(battle_box)
+	# la mini mappa 3D della battaglia, con le miniature
+	batt_titolo = UI.title("", 30)
+	battle_box.add_child(batt_titolo)
+	batt3d = preload("res://scripts/ui/battaglia_3d.gd").new()
+	batt3d.setup(engine)
+	battle_box.add_child(batt3d)
+	batt_log = UI.label("", 17, UI.PERG_D)
+	batt_log.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	batt_log.custom_minimum_size = Vector2(600, 0)
+	battle_box.add_child(batt_log)
+	var br := HBoxContainer.new()
+	br.add_theme_constant_override("separation", 10)
+	var close := UI.button("Nascondi", 170, 42, 18)
+	close.pressed.connect(func(): battle_panel.visible = false)
+	br.add_child(close)
+	var vista := UI.button("Vista iniziale", 200, 42, 18)
+	vista.pressed.connect(func():
+		batt3d.yaw = 0.0
+		batt3d.pitch = 0.8
+		batt3d.dist = 5.0
+		batt3d.target = Vector3(0, 0, 0.15)
+		batt3d._cam())
+	br.add_child(vista)
+	battle_box.add_child(br)
 	# messaggi e finestre
 	toast_box = VBoxContainer.new()
 	toast_box.anchor_left = 0.5
@@ -523,14 +550,24 @@ func _on_fx(kind: String, d: Dictionary) -> void:
 			_banner("Chiamata alle Armi!")
 		"battaglia_inizio":
 			_battaglia_mostra()
+			batt3d.inizia(d)
 			mappa2d.flash[d["loc"]] = 1.5
 		"battaglia_fine":
 			_battaglia_refresh()
+			batt3d.fine(d)
 			var bp := battle_panel
-			get_tree().create_timer(2.5 if not e.headless else 0.0).timeout.connect(func():
+			get_tree().create_timer(4.0 if not e.headless else 0.0).timeout.connect(func():
 				if is_instance_valid(bp) and (e.battaglia.is_empty() or e.battaglia.get("esito", "") != ""):
 					bp.visible = false)
-		"battaglia_riga", "battaglia_colpi", "battaglia_round":
+		"battaglia_attacco":
+			batt3d.attacco(d)
+		"battaglia_colpi":
+			_battaglia_refresh()
+			batt3d.esiti(d)
+		"battaglia_round":
+			_battaglia_refresh()
+			batt3d.sincronizza()
+		"battaglia_riga":
 			_battaglia_refresh()
 		"resa":
 			toast("%s si arrende!" % e.lnome(d["loc"]), UI.ORO_L)
@@ -592,38 +629,19 @@ func _battaglia_refresh() -> void:
 	var b: Dictionary = e.battaglia
 	if b.is_empty() or not battle_panel.visible:
 		return
-	for c in battle_box.get_children():
-		battle_box.remove_child(c)
-		c.queue_free()
 	var tipo: String = {"battaglia": "Battaglia", "assalto": "Assalto", "sortita": "Sortita"}[b["tipo"]]
 	var titolo := "%s a %s — Round %d" % [tipo, e.lnome(b["loc"]), b["round"]]
 	if b.get("esito", "") != "":
 		titolo = "%s a %s — vincono i %s" % [tipo, e.lnome(b["loc"]), b["esito"]]
-	battle_box.add_child(UI.title(titolo, 34))
-	for s in [b["dif"], b["att"]]:
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 10)
-		var lbl := UI.label("%s\n%s" % [D.LATI[s], "attaccano" if s == b["att"] else "difendono"], 20, D.COL_LATO[s].lightened(0.4), UI.font_head)
-		lbl.custom_minimum_size.x = 130
-		row.add_child(lbl)
-		for p in 3:
-			var id: String = b["fronte"][s][p]
-			row.add_child(_box_battaglia(id, s))
-		if b["tipo"] == "assalto" and s == b["dif"]:
-			row.add_child(_box_guarnigione(b))
-		var ris := []
-		for id in b["riserva"][s]:
-			ris.append(e.nome(id))
-		if not ris.is_empty():
-			row.add_child(UI.wrap(UI.label("Riserva: " + ", ".join(ris), 17, UI.MUTED), 160))
-		battle_box.add_child(row)
+	if b["tipo"] == "assalto":
+		titolo += "   (mura 1-%d, opere %d)" % [b["mura"], b["opere"]]
+	batt_titolo.text = titolo
+	var w := minf(center.size.x - 40.0, 1180.0)
+	var hh := minf(w * 0.56, center.size.y - 250.0)
+	batt3d.custom_minimum_size = Vector2(w, maxf(hh, 260.0))
+	batt_log.custom_minimum_size.x = w
 	var righe: Array = b["righe"]
-	var ultime := righe.slice(maxi(0, righe.size() - 6))
-	var lg := UI.wrap(UI.label("\n".join(ultime), 17, UI.PERG_D), 900)
-	battle_box.add_child(lg)
-	var close := UI.button("Nascondi", 160, 42, 18)
-	close.pressed.connect(func(): battle_panel.visible = false)
-	battle_box.add_child(close)
+	batt_log.text = "\n".join(righe.slice(maxi(0, righe.size() - 4)))
 	_battaglia_adatta.call_deferred()
 
 
@@ -631,47 +649,6 @@ func _battaglia_adatta() -> void:
 	battle_panel.size = Vector2.ZERO
 	battle_panel.reset_size()
 	battle_panel.position = ((center.size - battle_panel.size) * 0.5).max(Vector2(6, 60))
-
-
-func _box_battaglia(id: String, s: int) -> Control:
-	var e := engine
-	var pc := PanelContainer.new()
-	pc.add_theme_stylebox_override("panel", UI.panel_style(Color("#33241a"), D.COL_LATO[s], 2, 6))
-	pc.custom_minimum_size = Vector2(190, 108)
-	var vb := VBoxContainer.new()
-	pc.add_child(vb)
-	if id == "":
-		vb.add_child(UI.label("—", 20, UI.MUTED))
-		return pc
-	var r := HBoxContainer.new()
-	r.add_child(UI.icon_rect(UI.scudo(id), Vector2(26, 32)))
-	var rotto: bool = id in e.battaglia["rotti"][s]
-	r.add_child(UI.label(e.nome(id), 19, UI.ROSSO_L if rotto else UI.PERG, UI.font_head))
-	vb.add_child(r)
-	var f := Forze.new()
-	f.f = e.L[id]["forze"]
-	f.custom_minimum_size = Vector2(180, 24)
-	vb.add_child(f)
-	var rt := 0
-	for u in e.L[id]["rotte"]:
-		rt += int(e.L[id]["rotte"][u])
-	vb.add_child(UI.label("in rotta: %d" % rt if not rotto else "IN ROTTA", 16, UI.ROSSO_L if rt > 0 or rotto else UI.MUTED))
-	return pc
-
-
-func _box_guarnigione(b: Dictionary) -> Control:
-	var pc := PanelContainer.new()
-	pc.add_theme_stylebox_override("panel", UI.panel_style(Color("#3a3128"), UI.PERG_D, 2, 6))
-	pc.custom_minimum_size = Vector2(190, 108)
-	var vb := VBoxContainer.new()
-	pc.add_child(vb)
-	vb.add_child(UI.label("Guarnigione", 19, UI.PERG, UI.font_head))
-	var f := Forze.new()
-	f.f = b["guarn"]["forze"]
-	f.custom_minimum_size = Vector2(180, 24)
-	vb.add_child(f)
-	vb.add_child(UI.label("mura 1-%d, opere %d" % [b["mura"], b["opere"]], 16, UI.MUTED))
-	return pc
 
 
 # ================================================================ online

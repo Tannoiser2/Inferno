@@ -187,6 +187,7 @@ func _riga(t: String) -> void:
 
 func _combatti() -> int:
 	var b := battaglia
+	await _pace(1.6)
 	await _eventi_inizio()
 	await _pace(0.8)
 	while true:
@@ -470,10 +471,13 @@ func _fase(tipo: String, s: int, r: int) -> void:
 			nomi.append("la guarnigione" if h == GUARN else nome(h))
 		var cosa = {"arc": "tiro", "cav": "cavalleria", "inf": "fanteria", "mel": "mischia"}[tipo]
 		_riga("%s: %s colpisce %s con %d colpi%s." % [cosa.capitalize(), ", ".join(nomi), "la guarnigione" if t == GUARN else nome(t), colpi, (" (%d di balestra)" % bal) if bal > 0 else ""])
+		# la scena della battaglia anima il tiro o la carica, poi si vedono gli esiti
+		fx.emit("battaglia_attacco", {"tipo": tipo, "s": s, "da": g["da"].duplicate(), "t": t, "colpi": colpi, "bal": bal})
+		await _pace(1.3)
 		var scelta_att: bool = (bal > 0 and (_scelgono_bersaglio(g["da"]))) or (tipo == "cav" and r == 1 and b["eventi"].get("scontro", -1) == s)
-		await _applica_colpi(t, colpi, bal, scelta_att)
-		fx.emit("battaglia_colpi", {"t": t, "n": colpi})
-		await _pace(0.35)
+		var esiti := await _applica_colpi(t, colpi, bal, scelta_att)
+		fx.emit("battaglia_colpi", {"t": t, "n": colpi, "esiti": esiti, "tipo": tipo})
+		await _pace(clampf(0.5 + 0.18 * esiti.size(), 0.6, 2.0))
 
 
 func _scelgono_bersaglio(da: Array) -> bool:
@@ -489,8 +493,10 @@ func _scelgono_bersaglio(da: Array) -> bool:
 
 
 ## Tiri per le Mura (Assalto/Sortita), poi un tiro di Protezione per colpo.
-func _applica_colpi(t: String, colpi: int, bal: int, scelta_att: bool) -> void:
+## Restituisce gli esiti colpo per colpo, per l'animazione: {"u": unità, "x": "mura"|"salvo"|"rotta"|"vill"}.
+func _applica_colpi(t: String, colpi: int, bal: int, scelta_att: bool) -> Array:
 	var b := battaglia
+	var esiti := []
 	var s := _lato_h(t)
 	var mura := 0
 	if b["tipo"] == "assalto":
@@ -516,6 +522,8 @@ func _applica_colpi(t: String, colpi: int, bal: int, scelta_att: bool) -> void:
 				salvati += 1
 		if salvati > 0:
 			_riga("Le mura (1-%d) fermano %d colpi su %d (dadi %s)." % [mura, salvati, colpi, _dadi(dd)])
+			for i in salvati:
+				esiti.append({"u": "", "x": "mura"})
 		var restano := colpi - salvati
 		bal = mini(bal, restano)
 		colpi = restano
@@ -535,12 +543,15 @@ func _applica_colpi(t: String, colpi: int, bal: int, scelta_att: bool) -> void:
 			if t != GUARN:
 				_perdita(t, "vill")
 			dadi.append("V")
+			esiti.append({"u": u, "x": "vill"})
 			continue
 		var prot := _prot(t, u, balestra)
 		var x := d6()
 		dadi.append(str(x))
 		if x <= prot:
+			esiti.append({"u": u, "x": "salvo"})
 			continue
+		esiti.append({"u": u, "x": "rotta"})
 		# in Rotta
 		_forze(t)[u] -= 1
 		if _forze(t)[u] == 0:
@@ -557,6 +568,7 @@ func _applica_colpi(t: String, colpi: int, bal: int, scelta_att: bool) -> void:
 		b["rotti"][s].append(t)
 		_riga("%s va in rotta!" % nome(t))
 		await _fiume_rosso(t)
+	return esiti
 
 
 func _dadi(dd: Array) -> String:
