@@ -47,8 +47,12 @@ func _run() -> void:
 			await _wait(0.3)
 		menu.on_code.text = code
 		await menu._online_join()
+	var ultimo := 0
 	while true:
 		await process_frame
+		if Time.get_ticks_msec() - ultimo > 20000 and main.current != null and "engine" in main.current and main.current.engine != null:
+			ultimo = Time.get_ticks_msec()
+			print("INFTEST avanzamento turno ", main.current.engine.turno, " decisioni ", main.current.engine.record.size(), " in attesa ", main.current.pending.get("k", main.current.pending.get("type", "")))
 		if Time.get_ticks_msec() - t0 > 900000:
 			print("INFTEST tempo scaduto")
 			quit(2)

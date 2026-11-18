@@ -54,18 +54,25 @@ func battaglia_campale(l: String, att: int, attivo_id: String, via_da: String, s
 	var a_lords := fuori_in(l, att)
 	var d_lords := fuori_in(l, dif)
 	battaglia = {"tipo": "battaglia", "loc": l, "att": att, "dif": dif, "round": 0, "lascia": -1,
-		"fronte": [["", "", ""], ["", "", ""]], "riserva": [[], []], "rotti": [[], []], "tutti": [[], []],
+		"fronte": [["", "", ""], ["", "", ""]], "riserva": [a_lords.duplicate(), d_lords.duplicate()], "rotti": [[], []],
+		"tutti": [a_lords.duplicate(), d_lords.duplicate()],
 		"via_da": via_da, "eventi": {}, "perse": {}, "righe": [], "soccorso": soccorso, "opere": 0, "mura": 0,
-		"guarn": {"forze": {}, "rotte": {}}, "esito": ""}
-	_schiera_campale(att, attivo_id, a_lords)
-	_schiera_difesa(dif, d_lords)
+		"guarn": {"forze": {}, "rotte": {}}, "esito": "", "sortiti": [], "sortiti_ris": [], "auto_colpi": [false, false],
+		"fianco_c": ["", ""]}
+	if att == 1:
+		battaglia["riserva"] = [d_lords.duplicate(), a_lords.duplicate()]
+		battaglia["tutti"] = [d_lords.duplicate(), a_lords.duplicate()]
+	# Sortita di soccorso: gli assediati escono dal Caposaldo dietro i difensori
 	for id in soccorso:
-		# Sortita di soccorso: gli assediati entrano dietro i difensori
-		battaglia["riserva"][att].append(id)
 		battaglia["tutti"][att].append(id)
+		battaglia["sortiti_ris"].append(id)
 	battaglia["opere"] = loc[l]["assedio"] if not soccorso.is_empty() else 0
 	log_msg("BATTAGLIA a %s: %s contro %s." % [lnome(l), _elenco(battaglia["tutti"][att]), _elenco(battaglia["tutti"][dif])])
 	fx.emit("battaglia_inizio", battaglia)
+	await _schiera_campale(att, attivo_id, a_lords)
+	await _schiera_difesa(dif, d_lords)
+	if not soccorso.is_empty():
+		await _esce_sortita(true)
 	return await _combatti()
 
 
@@ -98,14 +105,14 @@ func assalto(l: String, att: int, attivo_id: String, max_round := -1, mura_mod :
 	battaglia["riserva"][att] = aa
 	battaglia["tutti"][att] = a_lords
 	battaglia["tutti"][dif] = d_lords
-	if not d_lords.is_empty():
-		var best := _piu_forte(d_lords)
-		battaglia["fronte"][dif][1] = best
-		var r := d_lords.duplicate()
-		r.erase(best)
-		battaglia["riserva"][dif] = r
+	battaglia["riserva"][dif] = d_lords.duplicate()
+	for k in ["sortiti", "sortiti_ris"]:
+		battaglia[k] = []
+	battaglia["auto_colpi"] = [false, false]
+	battaglia["fianco_c"] = ["", ""]
 	log_msg("ASSALTO a %s: %s contro la guarnigione%s." % [lnome(l), _elenco(a_lords), (" e " + _elenco(d_lords)) if not d_lords.is_empty() else ""])
 	fx.emit("battaglia_inizio", battaglia)
+	await _primo_difensore(dif)
 	return await _combatti()
 
 
@@ -124,13 +131,14 @@ func sortita(l: String, att: int, attivo_id: String) -> int:
 	battaglia["riserva"][att] = aa
 	battaglia["tutti"][att] = a_lords
 	battaglia["tutti"][dif] = d_lords
-	var best := _piu_forte(d_lords)
-	battaglia["fronte"][dif][1] = best
-	var r := d_lords.duplicate()
-	r.erase(best)
-	battaglia["riserva"][dif] = r
+	battaglia["riserva"][dif] = d_lords.duplicate()
+	for k in ["sortiti", "sortiti_ris"]:
+		battaglia[k] = []
+	battaglia["auto_colpi"] = [false, false]
+	battaglia["fianco_c"] = ["", ""]
 	log_msg("SORTITA da %s: %s contro %s." % [lnome(l), _elenco(a_lords), _elenco(d_lords)])
 	fx.emit("battaglia_inizio", battaglia)
+	await _primo_difensore(dif)
 	return await _combatti()
 
 
@@ -151,30 +159,102 @@ func _piu_forte(ids: Array) -> String:
 	return best
 
 
+## Nome della posizione del Fronte vista da chi ci sta: i Guelfi guardano verso est, i Ghibellini verso ovest.
+func nome_pos(s: int, p: int) -> String:
+	if p == 1:
+		return "centro"
+	return "ala sinistra" if (p == 0) == (s == 0) else "ala destra"
+
+
+## Una scelta di battaglia: le fazioni dell'IA usano subito il consiglio (niente attese a ogni colpo).
+func _scelta_batt(s: int, k: String, titolo: String, testo: String, o: Array, consiglio: String, extra := {}) -> String:
+	if o.is_empty():
+		return ""
+	if players[s]["ai"] or o.size() == 1:
+		return consiglio if consiglio != "" else str(o[0]["id"])
+	extra["consiglio"] = consiglio
+	return await scegli(s, k, titolo, testo, o, extra)
+
+
+func _opz_signori(ids: Array) -> Array:
+	var o := []
+	for id in ids:
+		o.append(opz(id, "%s (%d unità)" % [nome(id), _vive(id)], {"sig": id}))
+	return o
+
+
+## Schieramento dell'attaccante: il Signore Attivo al centro, poi chi va sulle ali; gli altri in Riserva.
 func _schiera_campale(s: int, attivo_id: String, ids: Array) -> void:
 	var b := battaglia
-	b["tutti"][s] = ids.duplicate()
-	var resto := ids.duplicate()
+	var resto: Array = b["riserva"][s]
 	var centro := attivo_id if attivo_id in ids else _piu_forte(ids)
 	b["fronte"][s][1] = centro
 	resto.erase(centro)
-	resto.sort_custom(func(x, y): return forza(x) > forza(y))
+	fx.emit("battaglia_round", b)
 	for pos in [0, 2]:
-		if not resto.is_empty():
-			b["fronte"][s][pos] = resto.pop_front()
-	b["riserva"][s] = resto
+		if resto.is_empty():
+			break
+		var x := await _scelta_batt(s, "schiera", "Schieramento: %s" % nome_pos(s, pos),
+			"%s è al centro del Fronte. Chi metti sull'%s? Chi non va al Fronte resta in Riserva." % [nome(centro), nome_pos(s, pos)],
+			_opz_signori(resto), _piu_forte(resto), {"t": centro})
+		b["fronte"][s][pos] = x
+		resto.erase(x)
+		fx.emit("battaglia_round", b)
 
 
+## Schieramento del difensore: un Signore davanti a ogni attaccante del Fronte, prima al centro poi sulle ali.
 func _schiera_difesa(s: int, ids: Array) -> void:
 	var b := battaglia
 	var att := 1 - s
-	b["tutti"][s] = ids.duplicate()
-	var resto := ids.duplicate()
-	resto.sort_custom(func(x, y): return forza(x) > forza(y))
+	var resto: Array = b["riserva"][s]
 	for pos in [1, 0, 2]:
 		if b["fronte"][att][pos] != "" and not resto.is_empty():
-			b["fronte"][s][pos] = resto.pop_front()
-	b["riserva"][s] = resto
+			var nemico: String = b["fronte"][att][pos]
+			var x := await _scelta_batt(s, "schiera", "Schieramento: %s" % nome_pos(s, pos),
+				"Chi affronta %s (%d unità) sul tuo %s? Il difensore deve mettere un Signore davanti a ogni attaccante del Fronte." % [nome(nemico), _vive(nemico), nome_pos(s, pos)],
+				_opz_signori(resto), _piu_forte(resto), {"t": nemico})
+			b["fronte"][s][pos] = x
+			resto.erase(x)
+			fx.emit("battaglia_round", b)
+
+
+## Assalto e Sortita: il difensore sceglie chi sta al Fronte (al centro); gli altri in Riserva.
+func _primo_difensore(s: int) -> void:
+	var b := battaglia
+	var resto: Array = b["riserva"][s]
+	if resto.is_empty():
+		return
+	var x := await _scelta_batt(s, "schiera", "Schieramento: chi difende sul Fronte?",
+		"Ogni parte comincia con un solo Signore sul Fronte; gli altri restano in Riserva ed entrano un round alla volta.",
+		_opz_signori(resto), _piu_forte(resto))
+	b["fronte"][s][1] = x
+	resto.erase(x)
+	fx.emit("battaglia_round", b)
+
+
+## Sortita di soccorso: un Signore assediato esce dietro i difensori (all'inizio è obbligatorio, poi uno a round
+## fino alla dimensione del Caposaldo).
+func _esce_sortita(obbligo: bool) -> void:
+	var b := battaglia
+	var att: int = b["att"]
+	var ris: Array = b["sortiti_ris"]
+	var attivi := []
+	for id in b["sortiti"]:
+		if not id in b["rotti"][att] and _vive(id) > 0:
+			attivi.append(id)
+	if ris.is_empty() or (attivi.size() >= valore(b["loc"]) and not attivi.is_empty()):
+		return
+	var o := _opz_signori(ris)
+	if not obbligo and not attivi.is_empty():
+		o.append(opz("no", "Nessuno esce in questo round"))
+	var x := await _scelta_batt(att, "sortita_esce", "Sortita di soccorso",
+		"Quale Signore esce da %s e attacca i difensori alle spalle?" % lnome(b["loc"]), o, _piu_forte(ris))
+	if x == "no" or x == "":
+		return
+	ris.erase(x)
+	b["sortiti"].append(x)
+	_riga("%s esce da %s e attacca alle spalle." % [nome(x), lnome(b["loc"])])
+	fx.emit("battaglia_round", b)
 
 
 # ================================================================ svolgimento
@@ -209,8 +289,9 @@ func _combatti() -> int:
 				_riga("Gli attaccanti rinunciano all'Assalto.")
 				return await _fine(b["dif"])
 		if r > 1:
-			_riposiziona()
+			await _riposiziona()
 		fx.emit("battaglia_round", b)
+		await _scegli_fianchi()
 		for ph in _fasi(r):
 			await _fase(ph[0], ph[1], r)
 			var p := _perdente()
@@ -273,33 +354,118 @@ func _stato_lato(s: int) -> String:
 
 func _riposiziona() -> void:
 	var b := battaglia
+	# Rotta: i Signori in rotta lasciano lo Schieramento
 	for s in [b["att"], b["dif"]]:
 		for p in 3:
 			var id: String = b["fronte"][s][p]
 			if id != "" and (id in b["rotti"][s] or _vive(id) == 0):
 				b["fronte"][s][p] = ""
-		var occ := 0
-		for p in 3:
-			if b["fronte"][s][p] != "":
-				occ += 1
-		if b["tipo"] == "battaglia":
+		for id in b["riserva"][s].duplicate():
+			if id in b["rotti"][s] or _vive(id) == 0:
+				b["riserva"][s].erase(id)
+	if b["tipo"] == "battaglia":
+		# Avanzata: dalla Riserva in ogni posizione vuota del Fronte (prima l'attaccante, poi il difensore)
+		for s in [b["att"], b["dif"]]:
+			if s == b["dif"] and _sortiti_attivi().size() > 0:
+				continue    # i difensori in Riserva stanno affrontando la sortita alle spalle
 			for p in [1, 0, 2]:
-				if b["fronte"][s][p] == "" and not b["riserva"][s].is_empty():
-					b["fronte"][s][p] = _prendi_riserva(s)
+				var ris: Array = b["riserva"][s]
+				if b["fronte"][s][p] == "" and not ris.is_empty():
+					var x := await _scelta_batt(s, "avanza", "Avanzata: %s" % nome_pos(s, p),
+						"Il tuo %s è vuoto: quale Signore avanza dalla Riserva?" % nome_pos(s, p), _opz_signori(ris), _piu_forte(ris))
+					b["fronte"][s][p] = x
+					ris.erase(x)
+					fx.emit("battaglia_round", b)
+		# Centro: se è vuoto, ci va un Signore da un'ala
+		for s in [b["att"], b["dif"]]:
 			if b["fronte"][s][1] == "":
+				var ali := []
 				for p in [0, 2]:
 					if b["fronte"][s][p] != "":
-						b["fronte"][s][1] = b["fronte"][s][p]
-						b["fronte"][s][p] = ""
-						break
-		else:
-			# Assalto e Sortita: si aggiunge un Signore per round, fino alla dimensione del Caposaldo
-			var cap := valore(b["loc"])
-			if not b["riserva"][s].is_empty() and (occ < cap or occ == 0):
-				for p in [1, 0, 2]:
-					if b["fronte"][s][p] == "":
-						b["fronte"][s][p] = _prendi_riserva(s)
-						break
+						ali.append(b["fronte"][s][p])
+				if not ali.is_empty():
+					var o := []
+					for id in ali:
+						o.append(opz(id, "%s, dall'%s (%d unità)" % [nome(id), nome_pos(s, b["fronte"][s].find(id)), _vive(id)], {"sig": id}))
+					var x := await _scelta_batt(s, "al_centro", "Centro vuoto", "Il centro del tuo Fronte è vuoto: quale Signore ci si sposta da un'ala?", o, _piu_forte(ali))
+					var p0: int = b["fronte"][s].find(x)
+					b["fronte"][s][p0] = ""
+					b["fronte"][s][1] = x
+					fx.emit("battaglia_round", b)
+		if not b["sortiti_ris"].is_empty():
+			await _esce_sortita(_sortiti_attivi().is_empty())
+	else:
+		# Assalto e Sortita: si può aggiungere un Signore per round, fino alla dimensione del Caposaldo
+		var cap := valore(b["loc"])
+		for s in [b["att"], b["dif"]]:
+			var ris: Array = b["riserva"][s]
+			if ris.is_empty():
+				continue
+			var occ := 0
+			for p in 3:
+				if b["fronte"][s][p] != "":
+					occ += 1
+			if occ >= cap and occ > 0:
+				continue
+			var o := _opz_signori(ris)
+			if occ > 0:
+				o.append(opz("no", "Nessuno in questo round"))
+			var x := await _scelta_batt(s, "aggiungi", "Rinforzi al Fronte",
+				("Il tuo Fronte è vuoto: un Signore dalla Riserva deve avanzare." if occ == 0 else "Puoi portare un Signore dalla Riserva al Fronte (al massimo %d sul Fronte)." % cap),
+				o, _piu_forte(ris))
+			if x == "no" or x == "":
+				continue
+			for p in [1, 0, 2]:
+				if b["fronte"][s][p] == "":
+					b["fronte"][s][p] = x
+					break
+			ris.erase(x)
+			fx.emit("battaglia_round", b)
+
+
+func _sortiti_attivi() -> Array:
+	var b := battaglia
+	var out := []
+	for id in b.get("sortiti", []):
+		if not id in b["rotti"][b["att"]] and _vive(id) > 0:
+			out.append(id)
+	return out
+
+
+## Difensori in Riserva che affrontano la sortita di soccorso alle spalle.
+func _retro_difesa() -> Array:
+	var b := battaglia
+	var out := []
+	if _sortiti_attivi().is_empty():
+		return out
+	for id in b["riserva"][b["dif"]]:
+		if not id in b["rotti"][b["dif"]] and _vive(id) > 0:
+			out.append(id)
+	return out
+
+
+## All'inizio del round: un centro senza nemico davanti, con entrambe le ali nemiche, sceglie chi aggirare.
+func _scegli_fianchi() -> void:
+	var b := battaglia
+	b["fianco_c"] = ["", ""]
+	if b["tipo"] != "battaglia":
+		return
+	for s in [b["att"], b["dif"]]:
+		var c: String = b["fronte"][s][1]
+		if c == "" or c in b["rotti"][s] or _vive(c) == 0:
+			continue
+		var e = 1 - s
+		var fe := {}
+		for x in _fronte(e):
+			fe[x[0]] = x[1]
+		if fe.has(1) or not (fe.has(0) and fe.has(2)):
+			continue
+		var o := []
+		for p in [0, 2]:
+			o.append(opz(fe[p], "%s (%s nemica, %d unità)" % [nome(fe[p]), nome_pos(e, p), _vive(fe[p])], {"sig": fe[p]}))
+		var debole: String = fe[0] if forza(fe[0]) <= forza(fe[2]) else fe[2]
+		b["fianco_c"][s] = await _scelta_batt(s, "fianco", "Aggiramento sul Fianco",
+			"%s al centro non ha nemici davanti: quale ala nemica aggira?" % nome(c), o, debole, {"t": c})
 
 
 func _prendi_riserva(s: int) -> String:
@@ -415,6 +581,10 @@ func _bersaglio(s: int, pos: int) -> String:
 	for x in fe:
 		if x[0] == pos:
 			return x[1]
+	if pos == 1 and battaglia.has("fianco_c") and battaglia["fianco_c"][s] != "":
+		for x in fe:
+			if x[1] == battaglia["fianco_c"][s]:
+				return x[1]
 	var best := ""
 	var bd := 9
 	for x in fe:
@@ -428,17 +598,21 @@ func _bersaglio(s: int, pos: int) -> String:
 func _fase(tipo: String, s: int, r: int) -> void:
 	var b := battaglia
 	var e := 1 - s
-	var fronte := _fronte(s)
-	var gruppi := {}     # bersaglio -> {"arco", "bal", "mel", "da": []}
-	var attaccanti := []
-	for x in fronte:
+	var attaccanti := []      # [posizione, signore]; -1 = sortita alle spalle, -2 = Riserva che affronta la sortita
+	for x in _fronte(s):
 		attaccanti.append(x)
+	if b["tipo"] == "battaglia":
+		if s == b["att"]:
+			for id in _sortiti_attivi():
+				attaccanti.append([-1, id])
+		else:
+			for id in _retro_difesa():
+				attaccanti.append([-2, id])
 	# la Guarnigione combatte con i difensori dell'Assalto
 	if b["tipo"] == "assalto" and s == b["dif"] and _vive(GUARN) > 0:
 		attaccanti.append([1, GUARN])
-	var fe := _fronte(e)
-	if fe.is_empty() and not (b["tipo"] == "assalto" and e == b["dif"] and _vive(GUARN) > 0):
-		return
+	var gruppi := {}     # bersaglio (+ "|s" se dalla sortita) -> {"t", "arco", "bal", "mel", "da": [], "sortita"}
+	var ordine := []
 	for x in attaccanti:
 		var h: String = x[1]
 		var c := _colpi(h, tipo, r)
@@ -446,18 +620,18 @@ func _fase(tipo: String, s: int, r: int) -> void:
 			continue
 		if b["tipo"] == "assalto" and tipo == "mel":
 			c["mel"] = minf(c["mel"], 6.0)
-		var t := _bersaglio(s, x[0])
-		if b["tipo"] == "assalto" and e == b["dif"] and _vive(GUARN) > 0:
-			t = GUARN
+		var t := _bersaglio_di(s, x[0])
 		if t == "":
 			continue
-		if not gruppi.has(t):
-			gruppi[t] = {"arco": 0.0, "bal": 0.0, "mel": 0.0, "da": []}
-		for k in ["arco", "bal", "mel"]:
-			gruppi[t][k] += c[k]
-		gruppi[t]["da"].append(h)
-	for t in gruppi:
-		var g: Dictionary = gruppi[t]
+		var k := t + ("|s" if x[0] == -1 else "")
+		if not gruppi.has(k):
+			gruppi[k] = {"t": t, "arco": 0.0, "bal": 0.0, "mel": 0.0, "da": [], "sortita": x[0] == -1}
+			ordine.append(k)
+		for q in ["arco", "bal", "mel"]:
+			gruppi[k][q] += c[q]
+		gruppi[k]["da"].append(h)
+	for k in ordine:
+		var g: Dictionary = gruppi[k]
 		var tot: float = g["arco"] + g["bal"] + g["mel"]
 		if b["lascia"] == s:
 			tot *= 0.5
@@ -466,18 +640,132 @@ func _fase(tipo: String, s: int, r: int) -> void:
 		var bal := mini(colpi, int(ceil(g["bal"] - 0.0001))) if tipo == "arc" else 0
 		if colpi <= 0:
 			continue
+		var t: String = g["t"]
+		if t != GUARN and (_vive(t) == 0 or t in b["rotti"][e]):
+			t = _nuovo_bersaglio(s, g["da"])
+			if t == "":
+				continue
+		t = await _chi_assorbe(t, g["da"])
 		var nomi := []
 		for h in g["da"]:
 			nomi.append("la guarnigione" if h == GUARN else nome(h))
 		var cosa = {"arc": "tiro", "cav": "cavalleria", "inf": "fanteria", "mel": "mischia"}[tipo]
-		_riga("%s: %s colpisce %s con %d colpi%s." % [cosa.capitalize(), ", ".join(nomi), "la guarnigione" if t == GUARN else nome(t), colpi, (" (%d di balestra)" % bal) if bal > 0 else ""])
-		# la scena della battaglia anima il tiro o la carica, poi si vedono gli esiti
-		fx.emit("battaglia_attacco", {"tipo": tipo, "s": s, "da": g["da"].duplicate(), "t": t, "colpi": colpi, "bal": bal})
-		await _pace(1.3)
+		_riga("%s: %s colpisce %s con %d colpi%s%s." % [cosa.capitalize(), ", ".join(nomi), "la guarnigione" if t == GUARN else nome(t), colpi,
+			(" (%d di balestra)" % bal) if bal > 0 else "", " alle spalle" if g["sortita"] else ""])
 		var scelta_att: bool = (bal > 0 and (_scelgono_bersaglio(g["da"]))) or (tipo == "cav" and r == 1 and b["eventi"].get("scontro", -1) == s)
-		var esiti := await _applica_colpi(t, colpi, bal, scelta_att)
-		fx.emit("battaglia_colpi", {"t": t, "n": colpi, "esiti": esiti, "tipo": tipo})
-		await _pace(clampf(0.5 + 0.18 * esiti.size(), 0.6, 2.0))
+		var mura_ok := true
+		var primo := true
+		var giri := 0
+		# i Colpi che restano quando un Signore va in rotta passano alla nuova situazione di aggiramento
+		while colpi > 0 and t != "" and giri < 6:
+			giri += 1
+			if not primo:
+				_riga("%d colpi rimasti passano a %s." % [colpi, "la guarnigione" if t == GUARN else nome(t)])
+			# la scena della battaglia anima il tiro o la carica, poi si vedono gli esiti
+			fx.emit("battaglia_attacco", {"tipo": tipo, "s": s, "da": g["da"].duplicate(), "t": t, "colpi": colpi, "bal": bal, "sortita": g["sortita"]})
+			await _pace(1.3 if primo else 0.7)
+			var res := await _applica_colpi(t, colpi, bal, scelta_att, g["sortita"], mura_ok)
+			fx.emit("battaglia_colpi", {"t": t, "n": colpi, "esiti": res["esiti"], "tipo": tipo})
+			await _pace(clampf(0.5 + 0.18 * res["esiti"].size(), 0.6, 2.0))
+			colpi = res["resto"]
+			bal = res["resto_bal"]
+			mura_ok = false
+			primo = false
+			if colpi > 0:
+				t = _nuovo_bersaglio(s, g["da"])
+				if t != "":
+					t = await _chi_assorbe(t, g["da"])
+
+
+## Il bersaglio di un attaccante: chi gli sta di fronte, o chi aggira; la sortita di soccorso colpisce la Riserva.
+func _bersaglio_di(s: int, pos: int) -> String:
+	var b := battaglia
+	var e := 1 - s
+	if b["tipo"] == "assalto" and e == b["dif"] and _vive(GUARN) > 0:
+		return GUARN
+	if pos == -1:
+		var rd := _retro_difesa()
+		if not rd.is_empty():
+			return _piu_forte(rd)
+		return _bersaglio(s, 1)
+	if pos == -2:
+		var so := _sortiti_attivi()
+		return so[0] if not so.is_empty() else ""
+	return _bersaglio(s, pos)
+
+
+## Dopo una rotta: il nuovo bersaglio degli stessi attaccanti (nell'Assalto, dopo la Guarnigione, il Signore al Fronte).
+func _nuovo_bersaglio(s: int, da: Array) -> String:
+	var b := battaglia
+	var e := 1 - s
+	for h in da:
+		var pos := -9
+		if h == GUARN:
+			pos = 1
+		elif h in b["fronte"][s]:
+			pos = b["fronte"][s].find(h)
+		elif h in b.get("sortiti", []):
+			pos = -1
+		elif h in b["riserva"][s]:
+			pos = -2
+		if pos == -9:
+			continue
+		var t := _bersaglio_di(s, pos)
+		if t != "" and (t == GUARN or (_vive(t) > 0 and not t in b["rotti"][e])):
+			return t
+	return ""
+
+
+## Un Signore amico che aggira sul Fianco tutti gli attaccanti può assorbire i Colpi al posto del bersaglio:
+## lo sceglie chi li subisce.
+func _chi_assorbe(t: String, da: Array) -> String:
+	var b := battaglia
+	if t == GUARN or b["tipo"] != "battaglia":
+		return t
+	var st := _lato_h(t)
+	var s := 1 - st
+	var cand := [t]
+	for x in _fronte(st):
+		var f: String = x[1]
+		if f == t:
+			continue
+		var opposto := false
+		for y in _fronte(s):
+			if y[0] == x[0]:
+				opposto = true
+		if opposto:
+			continue
+		var tutti_aggirati := true
+		for h in da:
+			if h == GUARN or _bersaglio(st, x[0]) != h:
+				tutti_aggirati = false
+		if tutti_aggirati and not da.is_empty():
+			cand.append(f)
+	if cand.size() < 2:
+		return t
+	var o := []
+	var best := t
+	var bv := -1.0
+	for id in cand:
+		o.append(opz(id, "%s (%d unità)%s" % [nome(id), _vive(id), "" if id == t else ", che aggira sul Fianco"], {"sig": id}))
+		var v := _resistenza(id)
+		if v > bv:
+			bv = v
+			best = id
+	return await _scelta_batt(st, "assorbe", "Chi assorbe i colpi?",
+		"I colpi nemici sono diretti a %s; un Signore che aggira sul Fianco può prenderli al suo posto." % nome(t), o, best, {"t": t})
+
+
+## Quanto regge un Signore: media della Protezione delle sue unità.
+func _resistenza(id: String) -> float:
+	var f := _forze(id)
+	var tot := 0.0
+	var n := 0
+	for u in f:
+		var k := int(f[u])
+		tot += k * (float(_prot(id, u, false)) if u != "vill" else 0.0)
+		n += k
+	return tot / maxf(1.0, n) + n * 0.05
 
 
 func _scelgono_bersaglio(da: Array) -> bool:
@@ -492,9 +780,10 @@ func _scelgono_bersaglio(da: Array) -> bool:
 	return false
 
 
-## Tiri per le Mura (Assalto/Sortita), poi un tiro di Protezione per colpo.
-## Restituisce gli esiti colpo per colpo, per l'animazione: {"u": unità, "x": "mura"|"salvo"|"rotta"|"vill"}.
-func _applica_colpi(t: String, colpi: int, bal: int, scelta_att: bool) -> Array:
+## Tiri per le Mura (Assalto/Sortita, o le Opere contro la Sortita di soccorso), poi un tiro di Protezione per colpo.
+## Restituisce {"esiti": [{"u", "x": "mura"|"salvo"|"rotta"|"vill"}], "resto": colpi non assegnati, "resto_bal"}:
+## restano colpi quando il bersaglio va in rotta prima di averli presi tutti.
+func _applica_colpi(t: String, colpi: int, bal: int, scelta_att: bool, da_sortita := false, mura_ok := true) -> Dictionary:
 	var b := battaglia
 	var esiti := []
 	var s := _lato_h(t)
@@ -510,9 +799,9 @@ func _applica_colpi(t: String, colpi: int, bal: int, scelta_att: bool) -> Array:
 				mura -= 1
 	elif b["tipo"] == "sortita" and s == b["dif"]:
 		mura = b["opere"]
-	elif b["tipo"] == "battaglia" and not b["soccorso"].is_empty() and s == b["att"]:
-		pass
-	if mura > 0:
+	elif b["tipo"] == "battaglia" and da_sortita and s == b["dif"]:
+		mura = b["opere"]
+	if mura > 0 and mura_ok:
 		var salvati := 0
 		var dd := []
 		for i in colpi:
@@ -521,7 +810,7 @@ func _applica_colpi(t: String, colpi: int, bal: int, scelta_att: bool) -> Array:
 			if x <= mura:
 				salvati += 1
 		if salvati > 0:
-			_riga("Le mura (1-%d) fermano %d colpi su %d (dadi %s)." % [mura, salvati, colpi, _dadi(dd)])
+			_riga("%s (1-%d) fermano %d colpi su %d (dadi %s)." % ["Le mura" if b["tipo"] == "assalto" and s == b["dif"] else "Le opere d'assedio", mura, salvati, colpi, _dadi(dd)])
 			for i in salvati:
 				esiti.append({"u": "", "x": "mura"})
 		var restano := colpi - salvati
@@ -529,13 +818,15 @@ func _applica_colpi(t: String, colpi: int, bal: int, scelta_att: bool) -> Array:
 		colpi = restano
 	var dadi := []
 	var rotte := 0
+	var usati := 0
 	for i in colpi:
 		if _vive(t) == 0:
 			break
 		var balestra := i < bal
-		var u := _scegli_unita(t, balestra, scelta_att)
+		var u := await _scegli_unita_dec(t, balestra, scelta_att, i, colpi)
 		if u == "":
 			break
+		usati += 1
 		if u == "vill":
 			_forze(t)["vill"] -= 1
 			if _forze(t)["vill"] == 0:
@@ -568,7 +859,52 @@ func _applica_colpi(t: String, colpi: int, bal: int, scelta_att: bool) -> Array:
 		b["rotti"][s].append(t)
 		_riga("%s va in rotta!" % nome(t))
 		await _fiume_rosso(t)
-	return esiti
+	return {"esiti": esiti, "resto": colpi - usati, "resto_bal": maxi(0, bal - usati)}
+
+
+## Chi subisce il colpo: lo sceglie il possessore (o l'attaccante con i Balestrieri o lo Scontro Improvviso),
+## colpo per colpo; si può lasciar decidere al gioco per il resto della battaglia.
+func _scegli_unita_dec(t: String, balestra: bool, scelta_att: bool, i: int, n: int) -> String:
+	var b := battaglia
+	var consiglio := _scegli_unita(t, balestra, scelta_att)
+	if consiglio == "":
+		return ""
+	var chi := _lato_h(t)
+	if scelta_att:
+		chi = 1 - chi
+	if players[chi]["ai"] or b["auto_colpi"][chi]:
+		return consiglio
+	var f := _forze(t)
+	var cand := []
+	for u in f:
+		if int(f[u]) > 0:
+			cand.append(u)
+	if b["tipo"] == "assalto" and _lato_h(t) == b["att"]:
+		var cor := []
+		for u in cand:
+			if D.UNITA[u]["cor"]:
+				cor.append(u)
+		if not cor.is_empty():
+			cand = cor
+	if cand.size() == 1:
+		return cand[0]
+	var o := []
+	for u in D.ORDINE_UNITA:
+		if not u in cand:
+			continue
+		var p := _prot(t, u, balestra)
+		var dett := "tolti senza tiro" if u == "vill" else ("Corazza 1-%d" % p if D.UNITA[u]["cor"] else "si salvano solo con 1")
+		o.append(opz(u, "%s ×%d — %s" % [D.UNITA[u]["plur"], int(f[u]), dett], {"u": u}))
+	o.append(opz("auto", "Decidi tu fino alla fine della battaglia"))
+	var chi_t := "la guarnigione" if t == GUARN else nome(t)
+	var testo := ("Colpo %d di %d%s contro %s: quale unità lo subisce? Un'unità può prendere più colpi di fila finché si salva." % [i + 1, n, " di balestra" if balestra else "", chi_t])
+	if scelta_att:
+		testo = "Scegli tu il bersaglio: " + testo
+	var x := await scegli(chi, "colpo", "Chi subisce il colpo?", testo, o, {"t": t, "consiglio": consiglio})
+	if x == "auto":
+		b["auto_colpi"][chi] = true
+		return consiglio
+	return x
 
 
 func _dadi(dd: Array) -> String:

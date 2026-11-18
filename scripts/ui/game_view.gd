@@ -232,6 +232,7 @@ func _build() -> void:
 	battle_box.add_child(batt_titolo)
 	batt3d = preload("res://scripts/ui/battaglia_3d.gd").new()
 	batt3d.setup(engine)
+	batt3d.toccato.connect(_on_reparto_toccato)
 	battle_box.add_child(batt3d)
 	batt_log = UI.label("", 17, UI.PERG_D)
 	batt_log.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -631,6 +632,8 @@ func _battaglia_refresh() -> void:
 		return
 	var tipo: String = {"battaglia": "Battaglia", "assalto": "Assalto", "sortita": "Sortita"}[b["tipo"]]
 	var titolo := "%s a %s — Round %d" % [tipo, e.lnome(b["loc"]), b["round"]]
+	if b["round"] == 0:
+		titolo = "%s a %s — Schieramento" % [tipo, e.lnome(b["loc"])]
 	if b.get("esito", "") != "":
 		titolo = "%s a %s — vincono i %s" % [tipo, e.lnome(b["loc"]), b["esito"]]
 	if b["tipo"] == "assalto":
@@ -643,6 +646,24 @@ func _battaglia_refresh() -> void:
 	var righe: Array = b["righe"]
 	batt_log.text = "\n".join(righe.slice(maxi(0, righe.size() - 4)))
 	_battaglia_adatta.call_deferred()
+
+
+## Un reparto toccato sulla mini mappa della battaglia: se è una delle scelte in corso, la fa.
+## Per «chi subisce il colpo» si tocca una miniatura del tipo di unità voluto.
+func _on_reparto_toccato(h: String, u: String) -> void:
+	if pending.is_empty() or pending.get("type", "") != "scelta":
+		return
+	if engine.online != null and not online_mine():
+		return
+	for o in pending["opzioni"]:
+		if str(o.get("sig", "")) == h:
+			_submit(str(o["id"]))
+			return
+	if pending.get("k", "") == "colpo" and str(pending.get("t", "")) == h and u != "":
+		for o in pending["opzioni"]:
+			if str(o.get("u", "")) == u:
+				_submit(str(o["id"]))
+				return
 
 
 func _battaglia_adatta() -> void:
@@ -689,6 +710,8 @@ func _clear_prompt() -> void:
 	prompt.add_theme_stylebox_override("panel", _prompt_style(-1))
 	mappa2d.hot = {}
 	mappa2d.sel_lord = ""
+	if batt3d != null:
+		batt3d.evidenzia([])
 	if mappa3d != null:
 		mappa3d.hot = mappa2d.hot
 		mappa3d.sel_lord = ""
@@ -772,6 +795,15 @@ func _ui_scelta(req: Dictionary) -> void:
 	fl.add_theme_constant_override("v_separation", 6)
 	fl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	prompt_list.add_child(fl)
+	# nella battaglia: si evidenziano i reparti fra cui scegliere (si possono anche toccare sulla mini mappa)
+	if battle_panel.visible and not engine.battaglia.is_empty():
+		var ev := []
+		for o in req["opzioni"]:
+			if o.has("sig"):
+				ev.append(str(o["sig"]))
+		if req.get("k", "") == "colpo" and req.has("t"):
+			ev.append(str(req["t"]))
+		batt3d.evidenzia(ev)
 	for o in req["opzioni"]:
 		var id: String = str(o["id"])
 		var b := UI.button(str(o["t"]), 0, 46, 18)

@@ -59,6 +59,8 @@ func decide(e, s: int, req: Dictionary):
 			best = _loc_valore_max(e, o)
 		"sede":
 			best = _sede(e, s, req)
+	if (best == "" or not _ha(o, best)) and req.has("consiglio"):
+		best = str(req["consiglio"])
 	if best == "" or not _ha(o, best):
 		best = str(o[0]["id"])
 	return best

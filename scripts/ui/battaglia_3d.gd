@@ -20,6 +20,8 @@ const MODELLI := {"citta": "res://assets/modelli/citta.glb", "cittadina": "res:/
 const ANIM := {"corsa": ["corsa", "run", "gallop", "walk", "cammina", "marcia"], "attacco": ["attacco", "attack", "shoot", "tiro", "colpo", "slash"],
 		"morte": ["morte", "death", "die", "muore"], "riposo": ["riposo", "idle", "fermo"]}
 
+signal toccato(h: String, u: String)
+
 static var _mini_cache := {}
 
 var e
@@ -42,6 +44,8 @@ var _pinch := {}
 var _press := Vector2.ZERO
 var _moved := false
 var _mats := {}
+var _evid := []           # reparti evidenziati (scelte in corso)
+var _anelli := Node3D.new()
 
 
 func setup(eng) -> void:
@@ -110,7 +114,13 @@ func inizia(bb: Dictionary) -> void:
 	for c in mondo.get_children():
 		c.queue_free()
 	for c in effetti.get_children():
+		if c != _anelli:
+			c.queue_free()
+	if _anelli.get_parent() == null:
+		effetti.add_child(_anelli)
+	for c in _anelli.get_children():
 		c.queue_free()
+	_evid = []
 	reparti.clear()
 	proiettili.clear()
 	yaw = 0.0
@@ -126,6 +136,9 @@ func inizia(bb: Dictionary) -> void:
 		if b["tipo"] == "assalto":
 			muro_x = _dir(dentro) * 0.42
 			_mura(muro_x)
+	elif not b.get("soccorso", []).is_empty():
+		# Sortita di soccorso: il Caposaldo assediato è alle spalle dei difensori
+		_fortezza(b["loc"], _dir(b["dif"]))
 	for s in [0, 1]:
 		for id in b["tutti"][s]:
 			_nuovo_reparto(id, s)
@@ -188,7 +201,7 @@ func _fortezza(l: String, d: float) -> void:
 	var k := 1.3 / maxf(ab.size.x, 0.001)
 	n.scale = Vector3.ONE * k
 	n.rotation.y = -d * PI * 0.5
-	var c := Vector3(d * 2.25, 0, -0.1)
+	var c := Vector3(d * (2.25 if b["tipo"] != "battaglia" else 2.75), 0, -0.1 if b["tipo"] != "battaglia" else -1.3)
 	var ctr := Vector3(ab.position.x + ab.size.x * 0.5, ab.position.y, ab.position.z + ab.size.z * 0.5) * k
 	n.position = c - n.basis * ctr
 	mondo.add_child(n)
@@ -234,6 +247,13 @@ func _slot(h: String) -> Vector3:
 	if h in b["rotti"][s]:
 		var i: int = b["rotti"][s].find(h)
 		return Vector3(d * 2.85, 0, -1.5 + i * 0.75)
+	# Sortita di soccorso: chi è uscito sta alle spalle dei difensori, chi aspetta è ancora dentro le mura
+	var dd := _dir(b["dif"])
+	if h in b.get("sortiti", []):
+		var i2: int = b["sortiti"].find(h)
+		return Vector3(dd * 2.45, 0, -0.2 + i2 * 0.95)
+	if h in b.get("sortiti_ris", []):
+		return Vector3(dd * 2.85, 0, -1.3)
 	for p in 3:
 		if b["fronte"][s][p] == h:
 			var x := d * (1.0 if fortificato else 0.85)
@@ -244,6 +264,17 @@ func _slot(h: String) -> Vector3:
 		j = 0
 	var n := maxi(1, ris.size())
 	return Vector3(d * 1.8, 0, clampf((j - (n - 1) * 0.5) * 1.05, -1.65, 1.65))
+
+
+## Chi guarda all'indietro: chi è uscito in sortita alle spalle e la Riserva difensiva che lo affronta.
+func _verso(h: String) -> float:
+	var r: Dictionary = reparti[h]
+	var d := _dir(r["s"])
+	if h in b.get("sortiti", []):
+		return -d
+	if r["s"] == b["dif"] and h in b["riserva"][b["dif"]] and not b.get("sortiti", []).is_empty():
+		return -d
+	return d
 
 
 func _forze(h: String) -> Dictionary:
@@ -299,6 +330,7 @@ func _nuovo_reparto(h: String, s: int) -> void:
 	r["lbl"] = lbl
 	_allinea_numero(h, true)
 	_etichetta(h)
+	nodo.visible = not h in b.get("sortiti_ris", [])
 
 
 func _etichetta(h: String) -> void:
@@ -324,8 +356,7 @@ func _ordine(h: String) -> Array:
 
 
 func _posto(h: String, i: int, n: int) -> Vector3:
-	var r: Dictionary = reparti[h]
-	var d := _dir(r["s"])
+	var d := _verso(h)
 	if h == GUARN:
 		var per := maxi(1, n)
 		return Vector3(0, 0, (i - (per - 1) * 0.5) * minf(0.11, 1.5 / per))
@@ -358,7 +389,7 @@ func _allinea_numero(h: String, subito := false) -> void:
 			tenere.append({"n": mn, "u": u})
 	tenere.sort_custom(func(x, y): return D.ORDINE_UNITA.find(x["u"]) < D.ORDINE_UNITA.find(y["u"]))
 	r["mini"] = tenere
-	var d := _dir(r["s"])
+	var d := _verso(h)
 	for i in tenere.size():
 		var mn: Node3D = tenere[i]["n"]
 		var p := _posto(h, i, tenere.size())
@@ -400,6 +431,8 @@ func sincronizza() -> void:
 		_allinea_numero(h)
 		_etichetta(h)
 		_muovi(h, _slot(h), 0.9)
+		reparti[h]["nodo"].visible = not h in b.get("sortiti_ris", [])
+	_aggiorna_anelli()
 
 
 # ================================================================ miniature
@@ -840,6 +873,11 @@ func _process(dt: float) -> void:
 		else:
 			tenere.append(p)
 	proiettili = tenere
+	for a in _anelli.get_children():
+		var h: String = a.get_meta("h", "")
+		if reparti.has(h):
+			a.position = reparti[h]["nodo"].position + Vector3(0, 0.015, 0)
+			a.scale = Vector3.ONE * (1.0 + 0.06 * sin(_t * 5.0))
 	# passo: le miniature che si muovono ondeggiano
 	for h in reparti:
 		for m in reparti[h]["mini"]:
@@ -870,22 +908,99 @@ func _aabb(n: Node, tr: Transform3D) -> AABB:
 	return out
 
 
+# ================================================================ scelte
+
+## Evidenzia i reparti fra cui si sta scegliendo (anelli dorati sotto le miniature).
+func evidenzia(ids: Array) -> void:
+	_evid = ids.duplicate()
+	_aggiorna_anelli()
+
+
+func _aggiorna_anelli() -> void:
+	for c in _anelli.get_children():
+		c.queue_free()
+	for h in _evid:
+		if not reparti.has(h):
+			continue
+		var r := MeshInstance3D.new()
+		var tm := TorusMesh.new()
+		tm.inner_radius = 0.62
+		tm.outer_radius = 0.68
+		tm.rings = 32
+		r.mesh = tm
+		var m := StandardMaterial3D.new()
+		m.albedo_color = UI.ORO_L
+		m.emission_enabled = true
+		m.emission = UI.ORO
+		m.emission_energy_multiplier = 1.0
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		r.material_override = m
+		r.scale = Vector3(1.0, 1.0, 0.9)
+		r.set_meta("h", h)
+		_anelli.add_child(r)
+
+
+func _clic(sp: Vector2) -> void:
+	var p := sp * Vector2(vp.size) / size
+	var from := cam.project_ray_origin(p)
+	var dir := cam.project_ray_normal(p)
+	var best_h := ""
+	var best_u := ""
+	var bd := 0.09
+	for h in reparti:
+		if not reparti[h]["nodo"].visible:
+			continue
+		for m in reparti[h]["mini"]:
+			var mn: Node3D = m["n"]
+			if not is_instance_valid(mn) or not mn.is_inside_tree():
+				continue
+			var q := mn.global_position + Vector3(0, 0.12, 0)
+			var t := (q - from).dot(dir)
+			var dd := (from + dir * t).distance_to(q)
+			if dd < bd:
+				bd = dd
+				best_h = h
+				best_u = m["u"]
+	if best_h == "":
+		# vicino al centro di un reparto (anche senza colpire una miniatura)
+		if absf(dir.y) > 0.0001:
+			var hit := from + dir * (-from.y / dir.y)
+			var bd2 := 0.6
+			for h in reparti:
+				var dd2: float = Vector2(hit.x, hit.z).distance_to(Vector2(reparti[h]["nodo"].position.x, reparti[h]["nodo"].position.z))
+				if dd2 < bd2 and reparti[h]["nodo"].visible:
+					bd2 = dd2
+					best_h = h
+	if best_h != "":
+		toccato.emit(best_h, best_u)
+
+
 # ================================================================ comandi
 
 func _gui_input(ev: InputEvent) -> void:
 	if ev is InputEventScreenTouch:
 		if ev.pressed:
 			_touches[ev.index] = ev.position
+			if _touches.size() == 1:
+				_press = ev.position
+				_moved = false
 		else:
+			var tap: bool = _touches.size() == 1 and not _moved and ev.position.distance_to(_press) < 14.0
 			_touches.erase(ev.index)
+			if tap:
+				_clic(ev.position)
 		_pinch = {}
 		accept_event()
 		return
 	if ev is InputEventScreenDrag:
 		_touches[ev.index] = ev.position
 		if _touches.size() == 1:
-			_trascina(ev.relative)
+			if ev.position.distance_to(_press) > 10.0:
+				_moved = true
+			if _moved:
+				_trascina(ev.relative)
 		elif _touches.size() >= 2:
+			_moved = true
 			var keys := _touches.keys()
 			var a: Vector2 = _touches[keys[0]]
 			var c: Vector2 = _touches[keys[1]]
@@ -916,13 +1031,20 @@ func _gui_input(ev: InputEvent) -> void:
 		elif ev.button_index == MOUSE_BUTTON_WHEEL_DOWN and ev.pressed:
 			dist = clampf(dist * 1.12, 1.4, 9.0)
 			_cam()
+		elif ev.pressed:
+			_press = ev.position
+			_moved = false
+		elif ev.button_index == MOUSE_BUTTON_LEFT and not _moved and _touches.is_empty():
+			_clic(ev.position)
 		accept_event()
 	elif ev is InputEventMouseMotion and ev.button_mask != 0 and _touches.is_empty():
+		if ev.position.distance_to(_press) > 6.0:
+			_moved = true
 		if ev.button_mask & MOUSE_BUTTON_MASK_RIGHT:
 			yaw -= ev.relative.x * 0.006
 			pitch = clampf(pitch + ev.relative.y * 0.004, 0.2, 1.45)
 			_cam()
-		else:
+		elif _moved:
 			_trascina(ev.relative)
 		accept_event()
 
