@@ -15,5 +15,17 @@ func _run() -> void:
 	await create_timer(1.0).timeout
 	img = root.get_viewport().get_texture().get_image()
 	img.save_png("/tmp/s3d_b.png")
+	g.mappa3d.pitch = 0.55
+	g.mappa3d.yaw = 0.4
+	g.mappa3d.focus(Vector2(2900, 800))
+	await create_timer(1.0).timeout
+	img = root.get_viewport().get_texture().get_image()
+	img.save_png("/tmp/s3d_c.png")
+	g.mappa3d.pitch = 0.45
+	g.mappa3d.yaw = -0.3
+	g.mappa3d.focus(Vector2(1700, 1900))
+	await create_timer(1.0).timeout
+	img = root.get_viewport().get_texture().get_image()
+	img.save_png("/tmp/s3d_d.png")
 	g.engine.abort = true
 	quit()

@@ -1,6 +1,6 @@
 extends Control
-## Vista 3D: la mappa della Toscana su un tavolo, con le città, le cittadine e i castelli modellati
-## (torri e mura), i cilindri dei Signori con il loro stemma e le loro armate (cunei per la cavalleria,
+## Vista 3D: la mappa della Toscana su un tavolo, in rilievo (colline e montagne si alzano, gli alberi
+## sono piantati dove erano disegnati), con i modelli 3D di città, cittadine e castelli, i cilindri dei Signori con il loro stemma e le loro armate (cunei per la cavalleria,
 ## barre per la fanteria, nei colori del gioco), i segnalini come tessere.
 ## Comandi: un dito o il tasto sinistro trascinano; due dita pizzicano per lo zoom e ruotano;
 ## due dita in verticale o il tasto destro inclinano la vista; rotella per lo zoom.
@@ -54,13 +54,13 @@ func setup(eng) -> void:
 	en.background_color = Color("#140d08")
 	en.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	en.ambient_light_color = Color("#f2dfc0")
-	en.ambient_light_energy = 0.4
+	en.ambient_light_energy = 0.36
 	en.tonemap_mode = Environment.TONE_MAPPER_LINEAR
 	env.environment = en
 	vp.add_child(env)
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-52, -40, 0)
-	sun.light_energy = 0.9
+	sun.light_energy = 0.8
 	sun.light_color = Color("#fff1d6")
 	sun.shadow_enabled = true
 	vp.add_child(sun)
@@ -75,17 +75,16 @@ func setup(eng) -> void:
 	table.material_override = _mat(Color("#4a2f1c"), 0.85)
 	table.position.y = -0.04
 	vp.add_child(table)
-	# la mappa con il suo spessore
+	# la mappa in rilievo: colline e montagne si alzano, gli alberi disegnati diventano alberi veri
+	_carica_rilievo()
 	var board := MeshInstance3D.new()
-	var bm := PlaneMesh.new()
-	bm.size = Vector2(W / PX, H / PX)
-	board.mesh = bm
+	board.mesh = _mesh_terreno()
 	var bmat := StandardMaterial3D.new()
-	bmat.albedo_texture = UI.tex("res://assets/mappa/mappa.jpg")
-	bmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	bmat.albedo_color = Color(0.92, 0.9, 0.86)
+	bmat.albedo_texture = UI.tex("res://assets/mappa/mappa_3d.jpg")
+	bmat.albedo_color = Color(0.74, 0.73, 0.71)
+	bmat.roughness = 1.0
+	bmat.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
 	board.material_override = bmat
-	board.position.y = 0.0
 	vp.add_child(board)
 	var edge := MeshInstance3D.new()
 	var em := BoxMesh.new()
@@ -94,6 +93,7 @@ func setup(eng) -> void:
 	edge.material_override = _mat(Color("#2b1a10"), 0.8)
 	edge.position.y = -0.019
 	vp.add_child(edge)
+	_pianta_alberi()
 	_costruisci_citta()
 	pieces = Node3D.new()
 	vp.add_child(pieces)
@@ -119,7 +119,148 @@ func _mat_c(key: String, c: Color, rough := 0.7) -> StandardMaterial3D:
 
 
 func to3(p: Vector2, y := 0.0) -> Vector3:
-	return Vector3((p.x - W * 0.5) / PX, y, (p.y - H * 0.5) / PX)
+	return Vector3((p.x - W * 0.5) / PX, altezza(p) + y, (p.y - H * 0.5) / PX)
+
+
+# ================================================================ rilievo
+
+const AL = preload("res://scripts/data/inf_alberi.gd")
+const ESAGERA := 1.3
+const GX := 320
+const GZ := 272
+var _ril: Image
+var _rw := 1
+var _rh := 1
+
+
+func _carica_rilievo() -> void:
+	_ril = (load("res://assets/mappa/rilievo.png") as Texture2D).get_image()
+	if _ril.is_compressed():
+		_ril.decompress()
+	_rw = _ril.get_width()
+	_rh = _ril.get_height()
+
+
+## Altezza del terreno (in unità del mondo 3D) nel punto p della mappa (in pixel), interpolata.
+func altezza(p: Vector2) -> float:
+	if _ril == null:
+		return 0.0
+	var fx := clampf(p.x / W * (_rw - 1), 0.0, _rw - 1.001)
+	var fy := clampf(p.y / H * (_rh - 1), 0.0, _rh - 1.001)
+	var x0 := int(fx)
+	var y0 := int(fy)
+	var tx := fx - x0
+	var ty := fy - y0
+	var a := lerpf(_ril.get_pixel(x0, y0).r, _ril.get_pixel(x0 + 1, y0).r, tx)
+	var b := lerpf(_ril.get_pixel(x0, y0 + 1).r, _ril.get_pixel(x0 + 1, y0 + 1).r, tx)
+	return lerpf(a, b, ty) * AL.RILIEVO_MAX / PX * ESAGERA
+
+
+func _mesh_terreno() -> ArrayMesh:
+	var n := (GX + 1) * (GZ + 1)
+	var vtx := PackedVector3Array()
+	var nor := PackedVector3Array()
+	var uv := PackedVector2Array()
+	vtx.resize(n)
+	nor.resize(n)
+	uv.resize(n)
+	var hs := PackedFloat32Array()
+	hs.resize(n)
+	for j in GZ + 1:
+		for i in GX + 1:
+			var p := Vector2(W * i / GX, H * j / GZ)
+			hs[j * (GX + 1) + i] = altezza(p)
+	var dx := W / GX / PX
+	var dz := H / GZ / PX
+	for j in GZ + 1:
+		for i in GX + 1:
+			var k := j * (GX + 1) + i
+			var u := float(i) / GX
+			var v := float(j) / GZ
+			vtx[k] = Vector3((u - 0.5) * W / PX, hs[k], (v - 0.5) * H / PX)
+			uv[k] = Vector2(u, v)
+			var hl: float = hs[j * (GX + 1) + maxi(i - 1, 0)]
+			var hr: float = hs[j * (GX + 1) + mini(i + 1, GX)]
+			var hu: float = hs[maxi(j - 1, 0) * (GX + 1) + i]
+			var hd: float = hs[mini(j + 1, GZ) * (GX + 1) + i]
+			nor[k] = Vector3((hl - hr) / (2.0 * dx), 1.0, (hu - hd) / (2.0 * dz)).normalized()
+	var idx := PackedInt32Array()
+	idx.resize(GX * GZ * 6)
+	var c := 0
+	for j in GZ:
+		for i in GX:
+			var a := j * (GX + 1) + i
+			var b := a + 1
+			var d := a + GX + 1
+			var e2 := d + 1
+			idx[c] = a
+			idx[c + 1] = b
+			idx[c + 2] = d
+			idx[c + 3] = b
+			idx[c + 4] = e2
+			idx[c + 5] = d
+			c += 6
+	var arr := []
+	arr.resize(Mesh.ARRAY_MAX)
+	arr[Mesh.ARRAY_VERTEX] = vtx
+	arr[Mesh.ARRAY_NORMAL] = nor
+	arr[Mesh.ARRAY_TEX_UV] = uv
+	arr[Mesh.ARRAY_INDEX] = idx
+	var m := ArrayMesh.new()
+	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	return m
+
+
+## Gli alberi disegnati sulla mappa (tolti dalla texture) piantati in 3D: chiome tonde e cipressi.
+func _pianta_alberi() -> void:
+	var tondi := []
+	var cipressi := []
+	for a in AL.ALBERI:
+		(tondi if a[0] == "tondo" else cipressi).append(a)
+	var tronco := CylinderMesh.new()
+	tronco.top_radius = 0.35
+	tronco.bottom_radius = 0.5
+	tronco.height = 1.0
+	tronco.radial_segments = 6
+	tronco.rings = 1
+	var chioma := SphereMesh.new()
+	chioma.radius = 0.5
+	chioma.height = 1.0
+	chioma.radial_segments = 10
+	chioma.rings = 6
+	var mt := _mat(Color("#5a3b22"), 0.9)
+	var verdi := [_mat(Color("#62743a"), 0.9), _mat(Color("#475a2a"), 0.9)]
+	for g in 2:
+		var lista: Array = tondi if g == 0 else cipressi
+		if lista.is_empty():
+			continue
+		var mm_t := MultiMesh.new()
+		mm_t.transform_format = MultiMesh.TRANSFORM_3D
+		mm_t.mesh = tronco
+		mm_t.instance_count = lista.size()
+		var mm_c := MultiMesh.new()
+		mm_c.transform_format = MultiMesh.TRANSFORM_3D
+		mm_c.mesh = chioma
+		mm_c.instance_count = lista.size()
+		for i in lista.size():
+			var a: Array = lista[i]
+			var base := to3(Vector2(a[1], a[2]))
+			var w: float = a[3] / PX
+			var hh: float = a[4] / PX
+			var ht: float = hh * (0.55 if g == 0 else 0.18)
+			var tw: float = w * (0.16 if g == 0 else 0.3)
+			mm_t.set_instance_transform(i, Transform3D(Basis.from_scale(Vector3(tw, ht, tw)), base + Vector3(0, ht * 0.5, 0)))
+			var cs := Vector3(w * 1.1, hh * 1.05, w * 1.1) if g == 0 else Vector3(w * 1.0, hh * 1.15, w * 1.0)
+			var rot := Basis(Vector3.UP, float(i) * 1.7)
+			mm_c.set_instance_transform(i, Transform3D(rot * Basis.from_scale(cs), base + Vector3(0, ht * 0.85 + cs.y * 0.5, 0)))
+		var it := MultiMeshInstance3D.new()
+		it.multimesh = mm_t
+		it.material_override = mt
+		vp.add_child(it)
+		var ic := MultiMeshInstance3D.new()
+		ic.multimesh = mm_c
+		ic.material_override = verdi[g]
+		vp.add_child(ic)
 
 
 func to2(v: Vector3) -> Vector2:
@@ -158,98 +299,47 @@ func focus(p: Vector2, _z := -1.0) -> void:
 
 # ================================================================ città, cittadine e castelli
 
+## I modelli 3D di città, cittadine e castelli al posto dei disegni della mappa
+## (larghezza in pixel di mappa, come il disegno originale). Gli avamposti restano disegnati.
+const MODELLI := {"citta": ["res://assets/modelli/citta.glb", 270.0], "cittadina": ["res://assets/modelli/cittadina.glb", 200.0],
+		"castello": ["res://assets/modelli/castello.glb", 110.0]}
+var _alto := {}
+
+
 func _costruisci_citta() -> void:
-	var pietra := _mat(Color("#e6c79a"), 0.9)
-	var tetto := _mat(Color("#b4562c"), 0.8)
-	var scuro := _mat(Color("#8a6a48"), 0.9)
+	var scene := {}
+	for t in MODELLI:
+		scene[t] = load(MODELLI[t][0])
 	for l in D.LOCALI:
 		var info: Dictionary = D.LOCALI[l]
+		var t: String = info["tipo"]
+		if not scene.has(t):
+			_alto[l] = 0.0
+			continue
+		var n: Node3D = scene[t].instantiate()
+		var ab := _aabb(n, Transform3D.IDENTITY)
+		var k: float = MODELLI[t][1] / PX / maxf(ab.size.x, 0.001)
+		n.scale = Vector3.ONE * k
 		var c := to3(info["pos"])
-		var n := Node3D.new()
-		n.position = c
+		n.position = c - Vector3((ab.position.x + ab.size.x * 0.5) * k, ab.position.y * k, (ab.position.z + ab.size.z * 0.5) * k)
 		vp.add_child(n)
-		match info["tipo"]:
-			"castello":
-				_torre(n, Vector3(0, 0, -0.012), 0.022, 0.07, pietra, scuro)
-				_muro(n, 0.028, 0.02, pietra)
-			"cittadina":
-				_torre(n, Vector3(-0.014, 0, -0.01), 0.018, 0.085, pietra, scuro)
-				_casa(n, Vector3(0.016, 0, 0.004), Vector3(0.03, 0.03, 0.022), pietra, tetto)
-				_casa(n, Vector3(-0.006, 0, 0.018), Vector3(0.022, 0.024, 0.018), pietra, tetto)
-			"citta":
-				_muro(n, 0.05, 0.025, pietra)
-				_torre(n, Vector3(-0.02, 0, -0.018), 0.018, 0.11, pietra, scuro)
-				_torre(n, Vector3(0.022, 0, -0.012), 0.016, 0.09, pietra, scuro)
-				_casa(n, Vector3(0.0, 0, 0.012), Vector3(0.04, 0.04, 0.026), pietra, tetto)
-				# la cupola del duomo
-				var cu := MeshInstance3D.new()
-				var sm := SphereMesh.new()
-				sm.radius = 0.014
-				sm.height = 0.02
-				cu.mesh = sm
-				cu.material_override = tetto
-				cu.position = Vector3(0.0, 0.045, 0.012)
-				n.add_child(cu)
-			"avamposto":
-				var fr := MeshInstance3D.new()
-				var pm := PrismMesh.new()
-				pm.size = Vector3(0.05, 0.012, 0.04)
-				fr.mesh = pm
-				fr.material_override = _mat(UI.PORPORA, 0.6)
-				fr.rotation_degrees = Vector3(0, 0, 90)
-				fr.position = Vector3(0, 0.025, 0)
-				n.add_child(fr)
+		_alto[l] = ab.size.y * k
 
 
-func _torre(n: Node3D, at: Vector3, w: float, h: float, m: Material, merli: Material) -> void:
-	var t := MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = Vector3(w, h, w)
-	t.mesh = bm
-	t.material_override = m
-	t.position = at + Vector3(0, h * 0.5, 0)
-	n.add_child(t)
-	for i in 4:
-		var mr := MeshInstance3D.new()
-		var mm := BoxMesh.new()
-		mm.size = Vector3(w * 0.3, w * 0.35, w * 0.3)
-		mr.mesh = mm
-		mr.material_override = merli
-		var dx := (w * 0.35) * (1 if i % 2 == 0 else -1)
-		var dz := (w * 0.35) * (1 if i < 2 else -1)
-		mr.position = at + Vector3(dx, h + w * 0.17, dz)
-		n.add_child(mr)
-
-
-func _casa(n: Node3D, at: Vector3, sz: Vector3, m: Material, tetto: Material) -> void:
-	var c := MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = sz
-	c.mesh = bm
-	c.material_override = m
-	c.position = at + Vector3(0, sz.y * 0.5, 0)
-	n.add_child(c)
-	var t := MeshInstance3D.new()
-	var pm := PrismMesh.new()
-	pm.size = Vector3(sz.x * 1.05, sz.y * 0.5, sz.z * 1.05)
-	t.mesh = pm
-	t.material_override = tetto
-	t.position = at + Vector3(0, sz.y + sz.y * 0.25, 0)
-	n.add_child(t)
-
-
-func _muro(n: Node3D, r: float, h: float, m: Material) -> void:
-	var seg := 10
-	for i in seg:
-		var a := TAU * i / seg
-		var mi := MeshInstance3D.new()
-		var bm := BoxMesh.new()
-		bm.size = Vector3(TAU * r / seg * 1.05, h, 0.006)
-		mi.mesh = bm
-		mi.material_override = m
-		mi.position = Vector3(cos(a) * r, h * 0.5, sin(a) * r)
-		mi.rotation.y = -a + PI * 0.5
-		n.add_child(mi)
+func _aabb(n: Node, tr: Transform3D) -> AABB:
+	var out := AABB()
+	var primo := true
+	var t2: Transform3D = tr * (n.transform if n is Node3D else Transform3D.IDENTITY)
+	if n is MeshInstance3D and n.mesh != null:
+		var b: AABB = t2 * n.mesh.get_aabb()
+		out = b
+		primo = false
+	for c in n.get_children():
+		var b2 := _aabb(c, t2)
+		if b2.size != Vector3.ZERO:
+			out = b2 if primo else out.merge(b2)
+			primo = false
+	return out
 
 
 # ================================================================ pezzi
@@ -281,8 +371,9 @@ func _ricostruisci() -> void:
 	for l in hot:
 		var r := MeshInstance3D.new()
 		var tm := TorusMesh.new()
-		tm.inner_radius = 0.058
-		tm.outer_radius = 0.072
+		var rr: float = MODELLI[D.LOCALI[l]["tipo"]][1] * 0.5 / PX + 0.012 if MODELLI.has(D.LOCALI[l]["tipo"]) else 0.06
+		tm.inner_radius = rr
+		tm.outer_radius = rr + 0.014
 		r.mesh = tm
 		var m := _mat(UI.ORO_L, 0.3)
 		m.emission_enabled = true
@@ -531,6 +622,9 @@ func _click(s: Vector2) -> void:
 		return
 	var t0 := -from.y / dir.y
 	var hit := from + dir * t0
+	for _i in 4:
+		var hy := altezza(to2(hit))
+		hit = from + dir * ((hy - from.y) / dir.y)
 	var m := to2(hit)
 	var bl := ""
 	var bld := 85.0
