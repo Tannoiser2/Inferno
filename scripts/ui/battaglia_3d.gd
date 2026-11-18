@@ -80,14 +80,27 @@ func setup(eng) -> void:
 	en.background_color = Color("#140d08")
 	en.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	en.ambient_light_color = Color("#f2dfc0")
-	en.ambient_light_energy = 0.42
-	en.tonemap_mode = Environment.TONE_MAPPER_LINEAR
+	en.ambient_light_energy = 0.26
+	# filmico con esposizione un po' bassa: le miniature (texture chiare) non si sbiancano
+	en.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	en.tonemap_exposure = 0.95
+	en.tonemap_white = 2.2
+	en.adjustment_enabled = true
+	en.adjustment_contrast = 1.08
+	en.adjustment_saturation = 1.12
 	env.environment = en
 	vp.add_child(env)
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-55, -30, 0)
-	sun.light_energy = 0.85
-	sun.light_color = Color("#fff1d6")
+	sun.light_energy = 0.95
+	sun.light_color = Color("#ffe9c8")
+	sun.shadow_opacity = 0.75
+	# luce di riempimento fredda dal lato opposto: dà volume alle miniature senza schiarirle
+	var fill := DirectionalLight3D.new()
+	fill.rotation_degrees = Vector3(-25, 150, 0)
+	fill.light_energy = 0.22
+	fill.light_color = Color("#b8c8e8")
+	vp.add_child(fill)
 	sun.shadow_enabled = true
 	sun.directional_shadow_max_distance = 12.0
 	vp.add_child(sun)
@@ -604,7 +617,9 @@ func _miniatura(u: String, s: int) -> Node3D:
 	if sc != null:
 		var piv := Node3D.new()
 		piv.rotation.y = deg_to_rad(float(ROT_MINI.get(sc.resource_path.get_file().get_basename(), 0.0)))
-		piv.add_child(sc.instantiate())
+		var inst := sc.instantiate()
+		_opacizza(inst)
+		piv.add_child(inst)
 		var ab := _aabb(piv, Transform3D.IDENTITY)
 		var k := (0.27 if cav else 0.22) / maxf(ab.size.y, 0.001)
 		piv.scale = Vector3.ONE * k
@@ -635,6 +650,27 @@ func _scena_mini(u: String) -> PackedScene:
 		return null
 	_n_mini += 1
 	return l[_n_mini % l.size()]
+
+
+## I materiali delle miniature resi opachi (niente riflessi lucidi che le sbiancano), una volta per materiale.
+static var _opachi := {}
+
+
+func _opacizza(n: Node) -> void:
+	if n is MeshInstance3D and n.mesh != null:
+		for i in n.mesh.get_surface_count():
+			var m: Material = n.get_active_material(i)
+			if m is BaseMaterial3D:
+				if not _opachi.has(m):
+					var c: BaseMaterial3D = m.duplicate()
+					c.metallic = 0.0
+					c.roughness = 0.9
+					c.metallic_specular = 0.25
+					c.albedo_color = c.albedo_color * Color(0.92, 0.9, 0.88)
+					_opachi[m] = c
+				n.set_surface_override_material(i, _opachi[m])
+	for c in n.get_children():
+		_opacizza(c)
 
 
 func _trova_ap(n: Node) -> AnimationPlayer:

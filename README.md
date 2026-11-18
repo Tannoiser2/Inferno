@@ -22,6 +22,10 @@ Si gioca nel browser: https://tannoiser2.github.io/inferno/ (e dalla ludoteca ht
 - **Battaglie in 3D**: si apre una mini mappa del luogo dello scontro con le miniature delle armate, che entrano in campo,
   tirano frecce e quadrelli, caricano e cadono in rotta; nell'Assalto ci sono la fortezza, le mura e la Guarnigione.
   Le miniature definitive vanno in `assets/miniature/` (vedi `assets/miniature/LEGGIMI.txt`).
+- **Tutorial**: la *campagna guidata* (scenario A con i Guelfi, una lezione per ogni decisione nuova e il «Consiglio
+  del tutor» con la mossa dell'IA esperta spiegata) e la *battaglia guidata* (una battaglia campale e un Assalto
+  preparati). Il manuale **Strategie** raccoglie i consigli dei resoconti di partita di Volko Ruhnke e Christophe
+  Correia (InsideGMT, The Boardgames Chronicle).
 - **Avversario IA** in tre livelli (facile, normale, esperta) per una o entrambe le fazioni.
 - **Due persone sullo stesso dispositivo**: le scelte segrete si fanno passandosi il dispositivo.
 - **Online** con un amico (stanza con codice di 4 lettere) e **partite salvate** su Firebase
@@ -43,7 +47,7 @@ Si gioca nel browser: https://tannoiser2.github.io/inferno/ (e dalla ludoteca ht
 | `scripts/ui/` | Menu, tavolo di gioco, mappe 2D e 3D, regole |
 | `assets/` | Mappa, carte, schede, stemmi, segnalini, caratteri (OFL) |
 | `tools/` | Estrazione del materiale dal mod TTS e dai PDF, controllo dei glifi, pubblicazione |
-| `tests/` | Partite automatiche, schermate, prova online e salvataggio |
+| `tests/` | Partite automatiche, confronto fra versioni dell'IA, tutorial giocati da soli, schermate, prova online e salvataggio |
 | `ludoteca/` | Scheda e copertina per la ludoteca |
 
 ## Prove

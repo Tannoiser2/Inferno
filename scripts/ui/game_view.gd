@@ -40,6 +40,12 @@ var _loc_opts := {}
 var _dirty := true
 var save_code := ""
 var humans: Array = []
+# tutorial: lezioni e consiglio del tutor
+var tut := ""
+var tut_viste := {}
+var tutor_ai: InfAI
+var _lezioni_coda := []
+var _lezione_aperta := false
 var _ultimo_lato := -1
 
 
@@ -59,6 +65,10 @@ func _ready() -> void:
 		engine.online.view = self
 		humans = [engine.online.seat]
 		engine.online.heartbeat_loop()
+	tut = str(config.get("tutorial", ""))
+	if tut != "":
+		tutor_ai = InfAI.new()
+		tutor_ai.level = 2
 	_build()
 	engine.changed.connect(func(): _dirty = true)
 	engine.log_added.connect(_on_log)
@@ -547,6 +557,16 @@ func _banner(t: String) -> void:
 
 func _on_fx(kind: String, d: Dictionary) -> void:
 	var e := engine
+	if tut != "":
+		var ks: Array = Tutorial.chiavi_fx(e, kind, d, tut_viste)
+		if not ks.is_empty():
+			var pagine := []
+			for k in ks:
+				tut_viste[k] = true
+				pagine.append_array(Tutorial.LEZIONI[k])
+			# il gioco aspetta mentre la lezione è aperta
+			e.pausa = true
+			lezione(pagine, func(): e.pausa = _lezione_aperta)
 	match kind:
 		"turno":
 			_banner("Turno %d — Leva" % d["turno"])
@@ -786,6 +806,15 @@ func _on_spot(l: String) -> void:
 
 func _on_decision(req: Dictionary) -> void:
 	var s: int = req["side"]
+	if tut != "" and s in humans:
+		var ks: Array = Tutorial.chiavi_decisione(engine, req, tut_viste, tut)
+		if not ks.is_empty():
+			var pagine := []
+			for k in ks:
+				tut_viste[k] = true
+				pagine.append_array(Tutorial.LEZIONI[k])
+			lezione(pagine, func(): _show_decision(req))
+			return
 	var segreto: bool = req["type"] == "piano" or req.get("k", "") in ["evento", "tradimento_az"]
 	if humans.size() > 1 and segreto and s != _ultimo_lato:
 		_ultimo_lato = s
@@ -830,6 +859,8 @@ func _ui_scelta(req: Dictionary) -> void:
 			mappa3d.sel_lord = req["sig"]
 		if engine.sulla_mappa(req["sig"]):
 			_focus_soft(engine.L[req["sig"]]["loc"])
+	if tut != "":
+		_consiglio_tutor(req)
 	var fl := HFlowContainer.new()
 	fl.add_theme_constant_override("h_separation", 6)
 	fl.add_theme_constant_override("v_separation", 6)
@@ -1150,10 +1181,108 @@ func _carte() -> void:
 	_chiudi_btn(dlg)
 
 
+# ================================================================ tutorial
+
+## Lezione a pagine (una alla volta; se un'altra è già aperta, si mette in coda). Alla chiusura chiama then.
+func lezione(pagine: Array, then: Callable) -> void:
+	if _lezione_aperta:
+		_lezioni_coda.append([pagine, then])
+		return
+	_lezione_aperta = true
+	_pagina(pagine, 0, then)
+
+
+func _pagina(pagine: Array, i: int, then: Callable) -> void:
+	var dlg := _dialog(pagine[i][0], 1000)
+	dlg["root"].z_index = 40
+	var box: VBoxContainer = dlg["box"]
+	var rt := RichTextLabel.new()
+	rt.bbcode_enabled = true
+	rt.fit_content = true
+	rt.scroll_active = false
+	rt.custom_minimum_size = Vector2(900, 0)
+	rt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rt.add_theme_font_override("normal_font", UI.font_body)
+	rt.add_theme_font_override("bold_font", UI.font_bold)
+	rt.add_theme_font_override("italics_font", UI.font_italic)
+	for k in ["normal_font_size", "bold_font_size", "italics_font_size"]:
+		rt.add_theme_font_size_override(k, 23)
+	rt.add_theme_color_override("default_color", UI.TEXT)
+	rt.text = pagine[i][1]
+	box.add_child(rt)
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 10)
+	if i > 0:
+		var b0 := UI.button("Indietro", 180, 56, 21)
+		b0.pressed.connect(func():
+			dlg["root"].queue_free()
+			_pagina(pagine, i - 1, then))
+		h.add_child(b0)
+	var cnt := UI.label("Pagina %d di %d" % [i + 1, pagine.size()] if pagine.size() > 1 else "", 19, UI.MUTED)
+	cnt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cnt.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cnt.custom_minimum_size.x = 200
+	h.add_child(cnt)
+	var nx := UI.primary(UI.button("Avanti" if i < pagine.size() - 1 else "Ho capito", 220, 56, 22))
+	nx.pressed.connect(func():
+		dlg["root"].queue_free()
+		if i < pagine.size() - 1:
+			_pagina(pagine, i + 1, then)
+		else:
+			_lezione_aperta = false
+			then.call()
+			if not _lezioni_coda.is_empty() and not _lezione_aperta:
+				var q: Array = _lezioni_coda.pop_front()
+				lezione(q[0], q[1]))
+	h.add_child(nx)
+	box.add_child(h)
+
+
+## Il riquadro «Consiglio del tutor» in cima alla barra delle scelte.
+func _consiglio_tutor(req: Dictionary) -> void:
+	if tutor_ai == null or engine.online != null:
+		return
+	var r = tutor_ai.decide(engine, req["side"], req)
+	if r == null:
+		return
+	var adv: Array = Tutorial.consiglio(engine, req["side"], req, r)
+	var pc := PanelContainer.new()
+	var st := UI.panel_style(Color(0.16, 0.12, 0.05, 0.95), UI.ORO, 2, 8)
+	st.content_margin_left = 12
+	st.content_margin_right = 12
+	st.content_margin_top = 6
+	st.content_margin_bottom = 6
+	pc.add_theme_stylebox_override("panel", st)
+	pc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 12)
+	pc.add_child(hb)
+	var vb := VBoxContainer.new()
+	vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vb.custom_minimum_size.x = 420
+	hb.add_child(vb)
+	var t := UI.label("Consiglio del tutor — " + str(adv[0]), 19, UI.ORO_L, UI.font_semi)
+	t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	t.custom_minimum_size.x = 420
+	vb.add_child(t)
+	if str(adv[1]) != "":
+		var p := UI.label(str(adv[1]), 17, UI.PERG)
+		p.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		p.custom_minimum_size.x = 420
+		vb.add_child(p)
+	var b := UI.primary(UI.button("Segui il consiglio", 220, 46, 18))
+	b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	b.pressed.connect(func():
+		if pending == req:
+			_submit(r))
+	hb.add_child(b)
+	prompt_list.add_child(pc)
+
+
 func _ask_menu() -> void:
 	var dlg := _dialog("Menu", 560)
 	var box: VBoxContainer = dlg["box"]
-	for it in [["Salva la partita", _save_game], ["Regole", _show_rules], ["Torna al menu principale", func(): main.show_menu()]]:
+	for it in [["Salva la partita", _save_game], ["Regole", _show_rules], ["Strategie", _show_strategie], ["Torna al menu principale", func(): main.show_menu()]]:
 		var b := UI.button(it[0], 0, 58, 22)
 		var cb: Callable = it[1]
 		b.pressed.connect(func():
@@ -1167,6 +1296,10 @@ func _ask_menu() -> void:
 		v.text = "Velocità dell'IA: %s" % ("veloce" if engine.ai_delay < 0.3 else "normale"))
 	box.add_child(v)
 	_chiudi_btn(dlg)
+
+
+func _show_strategie() -> void:
+	lezione(Tutorial.STRATEGIE, func(): pass)
 
 
 func _show_rules() -> void:
@@ -1205,6 +1338,12 @@ func _save_game() -> void:
 
 func _on_end(res: Dictionary) -> void:
 	_clear_prompt()
+	if tut != "":
+		var k := "fine" if tut == "campagna" else "fine_battaglia"
+		if not tut_viste.has(k):
+			tut_viste[k] = true
+			lezione(Tutorial.LEZIONI[k], func(): _on_end(res))
+			return
 	var v: int = int(res.get("vince", -1))
 	var t := "Pareggio" if v < 0 else "Vincono i %s" % D.LATI[v]
 	var dlg := _dialog(t, 820)

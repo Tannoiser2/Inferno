@@ -2,6 +2,9 @@ extends Control
 ## Regole in breve (dal regolamento italiano) e guida all'interfaccia.
 
 var main
+## Titolo e testo da mostrare (vuoti = le regole in breve; il manuale «Strategie» usa la stessa pagina).
+var titolo := ""
+var testo := ""
 
 const TESTO := """[font_size=30][color=#f7d77a]Lo scopo[/color][/font_size]
 Guelfi (porpora, con Firenze) e Ghibellini (oro, con Siena) si contendono la Toscana fra il 1259 e il 1261. Si vince con più [b]Punti Vittoria[/b] alla fine dello scenario: 1 PV per ogni segnalino Alleanza conquistato, 1/2 PV per ogni Rovina e ogni Devastazione, 2 PV per il Carroccio nemico catturato. Chi resta senza Signori sulla mappa durante una Campagna perde subito.
@@ -49,7 +52,7 @@ func _ready() -> void:
 	var vb := VBoxContainer.new()
 	pc.add_child(vb)
 	var top := HBoxContainer.new()
-	var t := UI.label("Inferno — le regole in breve", 54, UI.INK, UI.font_title)
+	var t := UI.label(titolo if titolo != "" else "Inferno — le regole in breve", 54, UI.INK, UI.font_title)
 	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top.add_child(t)
 	var b := UI.primary(UI.button("Torna al menu", 300, 60, 24))
@@ -67,5 +70,5 @@ func _ready() -> void:
 	r.add_theme_color_override("default_color", UI.INK)
 	r.add_theme_font_size_override("normal_font_size", 23)
 	r.add_theme_font_size_override("bold_font_size", 23)
-	r.text = TESTO.replace("#f7d77a", "#8a2a10")
+	r.text = (testo if testo != "" else TESTO).replace("#f7d77a", "#8a2a10")
 	sc.add_child(r)

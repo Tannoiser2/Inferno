@@ -55,6 +55,17 @@ func start_game(config: Dictionary) -> void:
 	current = g
 
 
+## Il manuale di strategia (dal tutorial), sulla stessa pagina di pergamena delle regole.
+func show_strategie() -> void:
+	_clear()
+	var t := preload("res://scripts/ui/rules_view.gd").new()
+	t.main = self
+	t.titolo = "Inferno — strategie"
+	t.testo = Tutorial.strategie_bbcode()
+	add_child(t)
+	current = t
+
+
 func show_rules() -> void:
 	_clear()
 	var t := preload("res://scripts/ui/rules_view.gd").new()

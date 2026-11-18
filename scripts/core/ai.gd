@@ -7,6 +7,22 @@ extends RefCounted
 const D = preload("res://scripts/data/inf_data.gd")
 
 var level := 1
+## Consigli strategici raccolti dai resoconti di partita (Volko Ruhnke, Christophe Correia) e dal regolamento:
+## tenere i Podestà in servizio, devastare attorno agli assedi, assaltare per saccheggiare quando mancano le
+## provviste, difendere quando si è in vantaggio e rischiare quando si è indietro, devastare a fine partita.
+## Con false l'IA gioca come la prima versione (serve a confrontarle: tests/sim.gd).
+var strategia := true
+## Quali consigli usare (vuoto = tutti), per misurarli uno per uno con tests/confronto_ia.gd.
+## Misurati contro la prima versione (fino a 200 partite per scenario, metà per parte), nessuno ha dato un
+## vantaggio netto oltre il caso, e alcuni (Sorpresa, assalto, tasse) peggiorano: si tiene «concentra» (unirsi
+## agli assedi amici, non sprecare carte in piccoli rifornimenti), neutro o positivo e più simile ai resoconti.
+## Gli altri restano nel codice, spenti.
+const CONSIGLI_SCELTI := ["concentra"]
+var consigli := CONSIGLI_SCELTI.duplicate()
+
+
+func _c(k: String) -> bool:
+	return strategia and (consigli.is_empty() or k in consigli)
 var rng := RandomNumberGenerator.new()
 
 
@@ -71,6 +87,15 @@ func _ha(o: Array, id: String) -> bool:
 		if str(x["id"]) == id:
 			return true
 	return false
+
+
+## Vantaggio in Punti Vittoria della parte s (positivo = in testa).
+func _vantaggio(e, s: int) -> float:
+	return e.pv(s) - e.pv(1 - s)
+
+
+func _ultimo_turno(e) -> bool:
+	return e.turno >= e.turno_fine
 
 
 func _rumore(x: float) -> float:
@@ -187,6 +212,9 @@ func _valuta_base(e, s: int, id: String, x: Dictionary) -> float:
 		var n = e.stima_rifornimento(id)
 		if cibo >= need * 3:
 			return 0.3
+		# rifornirsi di una o due provviste alla volta spreca le carte: meglio muoversi
+		if _c("concentra") and cibo >= need * 2 and n <= 2:
+			return 0.7
 		return 2.5 + n * 0.6 - cibo * 0.3
 	if r == "foraggia":
 		return (2.6 if cibo < need else (1.6 if cibo < need * 2 else 0.3))
@@ -197,13 +225,27 @@ func _valuta_base(e, s: int, id: String, x: Dictionary) -> float:
 			v += 1.0
 		if svc_resto <= 1:
 			v += 2.0
+		if _c("tassa"):
+			# le Monete servono al Tradimento (ogni dado deve stare sotto le Monete impegnate)
+			if _ha_tradimento(e, s) and e.supp(id, "moneta") < 3:
+				v += 1.0
+			if e.podesta(id):
+				v += 0.4      # il Podestà incassa 2 Monete per Tassa
 		return v
 	if r == "mura":
 		return 0.9
 	if r == "costruttori":
 		return 2.0
 	if r == "devasta":
-		return 3.0 + (0.8 if cibo < need * 2 else 0.0) - x.get("costo", 1) * 0.3
+		var vd: float = 3.0 + (0.8 if cibo < need * 2 else 0.0) - x.get("costo", 1) * 0.3
+		if _c("devasta"):
+			# devastare attorno a un assedio avvicina la Resa (conta come un segnalino in più);
+			# a fine partita ogni devastazione è mezzo Punto Vittoria
+			if e.loc[l]["assedio"] > 0 and e.caposaldo_nemico(l, s):
+				vd += 2.0
+			if _ultimo_turno(e):
+				vd += 1.5
+		return vd
 	if r.begins_with("cavallata:"):
 		return 2.6
 	if r == "accampa":
@@ -217,11 +259,25 @@ func _valuta_base(e, s: int, id: String, x: Dictionary) -> float:
 		var sg: int = e.loc[l]["assedio"] + (1 if e.loc[l]["dev"] >= 0 else 0)
 		if dentro.is_empty():
 			var p := pow(minf(sg, 6) / 6.0, e.valore(l))
-			return 2.0 + p * 10.0 * e.valore(l)
+			var vs: float = 2.0 + p * 10.0 * e.valore(l)
+			if _c("assedio") and e.fuori_in(l, s).size() >= e.valore(l):
+				vs += 1.0     # le opere crescono anche se la Resa fallisce
+			return vs
 		return 1.8
 	if r == "assalto":
 		var p := _prob_assalto(e, s, l)
-		return -3.0 + p * 7.0 * e.valore(l) - (3.0 if e.loc[l]["assedio"] <= 1 else 0.0)
+		var va: float = -3.0 + p * 7.0 * e.valore(l) - (3.0 if e.loc[l]["assedio"] <= 1 else 0.0)
+		if _c("assalto"):
+			# senza provviste e fuori dalle mura nemiche, il Saccheggio è l'unico modo di sfamare l'armata
+			if cibo < need and p > 0.35:
+				va += 3.0
+			# nel proprio territorio un Saccheggio lascia rovine che danno mezzo punto al nemico: meglio la Resa
+			if e.lato_stampato(l) == s and cibo >= need:
+				va -= 2.0
+			# se ci sono abbastanza Signori per far crescere le opere, l'assedio è più economico dell'assalto
+			if e.fuori_in(l, s).size() >= e.valore(l) and not _ultimo_turno(e) and cibo >= need:
+				va -= 1.5
+		return va
 	if r == "sortita" or r == "sortita_agg":
 		var fe = e.forza_gruppo(e.fuori_in(l, 1 - s))
 		var fm = e.forza_gruppo(e.dentro_in(l, s))
@@ -237,6 +293,13 @@ func _valuta_base(e, s: int, id: String, x: Dictionary) -> float:
 	if r.begins_with("marcia"):
 		return _valuta_marcia(e, s, id, x, need, cibo, svc_resto, forza_mia)
 	return 0.0
+
+
+func _ha_tradimento(e, s: int) -> bool:
+	for c in e.piano[s]:
+		if c["t"] == "trad":
+			return true
+	return false
 
 
 ## Nessun altro Signore della parte potrà fare la Leva (tutti in località nemiche).
@@ -367,6 +430,9 @@ func _obiettivo(e, s: int, id: String) -> String:
 				val += 1.2
 			if e.assediata_da(v, s):
 				val += 2.0
+				# un assedio amico senza abbastanza Signori per far crescere le opere: raggiungerlo
+				if _c("concentra") and e.fuori_in(v, s).size() < e.valore(v) and not id in e.fuori_in(v, s):
+					val += 3.0 + e.valore(v)
 		elif not e.fuori_in(v, 1 - s).is_empty():
 			var fe: float = e.forza_gruppo(e.fuori_in(v, 1 - s))
 			if fe * 1.3 < forza_mia:
@@ -380,6 +446,13 @@ func _obiettivo(e, s: int, id: String) -> String:
 				val = 5.0 + e.valore(v)
 		if val <= 0.0:
 			continue
+		if _c("postura"):
+			var vant := _vantaggio(e, s)
+			# in vantaggio si difende vicino a casa, indietro si rischia di più lontano
+			if vant >= 2.0 and not e.amica(v, s) and not e.assediata_da(v, 1 - s):
+				val -= 1.0 + d * 0.3
+			elif vant <= -2.0 or _ultimo_turno(e):
+				val += 1.0
 		val -= d * 1.1
 		if val > bv:
 			bv = val
@@ -470,6 +543,9 @@ func _assedia(e, s: int, req: Dictionary) -> String:
 		return "assedia"
 	if v == 1 or lords >= v or e.ha_cap(id, "Genieri di Guerra"):
 		return "assedia"
+	# con la Sorpresa in mano l'assedio diventa subito un Assalto (Volko Ruhnke la tiene per questo)
+	if _c("sorpresa") and ("G03" if s == 0 else "H03") in e.tenute[s] and _prob_assalto(e, s, l) + 0.25 > 0.3:
+		return "assedia"
 	# senza abbastanza Signori per avanzare le opere: aggira e devasta
 	return "aggira" if level >= 1 else "assedia"
 
@@ -486,6 +562,9 @@ func _paga(e, s: int, o: Array) -> String:
 		if resto <= 0:
 			return r
 		if e.fase == "leva" and resto == 1 and (e.forza(t) >= 6.0 or e.signori_mappa(s).size() <= 2):
+			return r
+		# un Podestà che smobilita oltre il Servizio regala al nemico 3 Rivolte e 3 Tradimenti
+		if _c("podesta") and e.podesta(t) and resto <= 1:
 			return r
 	return "fine"
 
@@ -603,6 +682,8 @@ func _tradimento(e, s: int, o: Array) -> String:
 			var m := int(p[2])
 			var prob := pow(m / 6.0, e.valore(p[1]))
 			v = prob * e.valore(p[1]) * 3.0 - m * 0.15
+			if _c("tradimento") and (_vantaggio(e, s) < 0.0 or _ultimo_turno(e)):
+				v += prob * 1.5
 		elif r.begins_with("cor:"):
 			var vas: String = r.substr(4)
 			var prob2: float = maxf(0.0, (6 - int(D.VASSALLI[vas]["serv"])) / 6.0)
@@ -617,6 +698,12 @@ func _evento(e, s: int, req: Dictionary) -> String:
 	var o: Array = req["opzioni"]
 	var titolo: String = req.get("titolo", "")
 	if titolo == "Imboscata":
+		return "si"
+	if titolo == "Sorpresa" and _c("sorpresa"):
+		# solo se l'assalto ha buone probabilità (Assedio 2 e Mura -2 aiutano)
+		var l: String = req.get("loc", "")
+		if l != "" and _prob_assalto(e, s, l) + 0.25 < 0.3:
+			return "no"
 		return "si"
 	for x in o:
 		if x["id"] != "no":

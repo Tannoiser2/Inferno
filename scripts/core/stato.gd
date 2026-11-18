@@ -24,6 +24,8 @@ var ai_delay := 0.5
 var anim := 1.0
 ## Mostrare le battaglie in 3D (solo il ritmo della partita: non cambia le regole né l'online).
 var mostra_battaglie := true
+## Pausa (lezioni del tutorial aperte).
+var pausa := false
 var headless := false
 var abort := false
 var rng := RandomNumberGenerator.new()
@@ -103,6 +105,9 @@ func d6() -> int:
 
 
 func _pace(sec: float) -> void:
+	# il gioco aspetta mentre una lezione del tutorial è aperta
+	while pausa and not abort and is_inside_tree():
+		await get_tree().process_frame
 	if headless or anim <= 0.0 or abort or not is_inside_tree():
 		return
 	if online != null and online.catchup:

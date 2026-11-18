@@ -8,6 +8,8 @@ extends InfBattaglia
 # ================================================================ preparazione
 
 var _da_rimettere := {}
+## Lezione preparata del tutorial («battaglia»): niente scenario, solo gli scontri.
+var lezione := ""
 
 
 func setup(cfg: Dictionary) -> void:
@@ -21,10 +23,14 @@ func setup(cfg: Dictionary) -> void:
 	ai_delay = float(cfg.get("ai_delay", 0.5))
 	anim = float(cfg.get("anim", 1.0))
 	replay = cfg.get("replay", [])
+	lezione = str(cfg.get("lezione", ""))
 	ais.resize(2)
 	for s in 2:
 		var a := InfAI.new()
 		a.level = int(players[s].get("level", 1))
+		a.strategia = bool(players[s].get("strategia", true))
+		if players[s].has("consigli"):
+			a.consigli = players[s]["consigli"]
 		ais[s] = a
 	costruisci_adiacenze()
 	pool.clear()
@@ -120,6 +126,9 @@ func _metti_in_gioco(id: String, l: String) -> void:
 func run() -> void:
 	changed.emit()
 	await _pace(0.4)
+	if lezione == "battaglia":
+		await _lezione_battaglia()
+		return
 	log_msg("Scenario %s — %s." % [S["nome"], S["sotto"]])
 	if S.get("resistenza", false):
 		for id in ["lucca", "arezzo"]:
@@ -140,6 +149,48 @@ func run() -> void:
 		prima_leva = false
 	if abort:
 		return
+	_fine_partita()
+
+
+## La battaglia guidata: una battaglia campale a Monteriggioni, poi l'Assalto al castello di Casole.
+func _lezione_battaglia() -> void:
+	fase = "campagna"
+	for id in L:
+		if L[id]["stato"] == "mappa":
+			L[id]["stato"] = "rimosso"
+	var guelfi := ["firenze", "colle", "arezzo"]
+	var ghib := ["siena", "giordano"]
+	for id in guelfi + ghib:
+		_metti_in_gioco(id, "monteriggioni")
+		L[id]["svc"] = turno + 3
+	# i Guelfi hanno radunato i loro Vassalli: sono più numerosi, i Ghibellini hanno i Ritter
+	prendi_unita("firenze", {"cav": 2, "arm": 2, "mil": 1})
+	prendi_unita("arezzo", {"uia": 1, "arm": 1})
+	prendi_unita("siena", {"arm": 1, "mil": 1})
+	changed.emit()
+	log_msg("Battaglia guidata: i Guelfi di Firenze, Colle e Arezzo attaccano i Ghibellini di Siena a Monteriggioni.")
+	await _pace(1.0)
+	await battaglia_campale("monteriggioni", 0, "firenze", "")
+	if abort:
+		return
+	await _pace(2.0)
+	# l'Assalto: i Guelfi, di nuovo in forze, assediano da due carte il castello di Casole
+	for id in ghib:
+		if L[id]["stato"] == "mappa":
+			L[id]["stato"] = "rimosso"
+	for id in guelfi:
+		_metti_in_gioco(id, "casole")
+		L[id]["svc"] = turno + 3
+	prendi_unita("firenze", {"cav": 2, "arm": 2, "uia": 1})
+	loc["casole"]["assedio"] = 3
+	loc["casole"]["assedio_l"] = 0
+	changed.emit()
+	log_msg("Assalto guidato: i Guelfi assediano Casole (Assedio 3) e danno l'assalto alle mura.")
+	await _pace(1.0)
+	await assalto("casole", 0, "firenze")
+	if abort:
+		return
+	result = {"vince": -1, "motivo": "Fine della battaglia guidata."}
 	_fine_partita()
 
 
@@ -1495,6 +1546,9 @@ func _esegui(id: String, r: String, info: Dictionary) -> String:
 			log_msg("%s passa." % nome(id))
 			return "fine"
 		"accampa":
+			if await _sorpresa(id, l):
+				L[id]["mosso"] = true
+				return "fine"
 			var n := 1
 			if ha_cap(id, "Guastatori"):
 				n = 2
@@ -1683,6 +1737,25 @@ func _senza_comuni(g: Array) -> Array:
 	return out
 
 
+## Evento tenuto «Sorpresa»: cominciando l'assedio di un Caposaldo senza Signori dentro, Assedio 2 e Assalto
+## subito, fino a 3 round con le Mura a -2. Restituisce true se è stato giocato.
+func _sorpresa(id: String, v: String) -> bool:
+	var s := lato(id)
+	var sorpresa := "G03" if s == 0 else "H03"
+	if not dentro_in(v, 1 - s).is_empty() or not sorpresa in tenute[s]:
+		return false
+	var rr := await scegli(s, "evento", "Sorpresa", "Giocare Sorpresa contro %s? Assedio 2 e Assalto subito fino a 3 round, Mura -2." % lnome(v), [opz("si", "Gioca Sorpresa"), opz("no", "No, tienila")], {"sig": id, "loc": v})
+	if rr != "si":
+		return false
+	tenute[s].erase(sorpresa)
+	_scarta_evento(sorpresa)
+	loc[v]["assedio"] = 2
+	loc[v]["assedio_l"] = s
+	log_msg("SORPRESA! %s piomba su %s." % [nome(id), lnome(v)])
+	await assalto(v, s, id, 3, -2)
+	return true
+
+
 func _assedio_o_aggira(id: String, v: String) -> String:
 	var s := lato(id)
 	var dentro := dentro_in(v, 1 - s)
@@ -1692,18 +1765,8 @@ func _assedio_o_aggira(id: String, v: String) -> String:
 		"%s (%s, valore %d)%s. Assediare blocca il Caposaldo; aggirarlo permette di continuare la carta." % [lnome(v), D.LOCALI[v]["tipo"], valore(v), (" con dentro " + _elenco(dentro)) if not dentro.is_empty() else ""], o, {"sig": id})
 	if r == "assedia":
 		var n := 2 if ha_cap(id, "Guastatori") else 1
-		# Sorpresa
-		var sorpresa := "G03" if s == 0 else "H03"
-		if dentro.is_empty() and sorpresa in tenute[s]:
-			var rr := await scegli(s, "evento", "Sorpresa", "Giocare Sorpresa? Assedio 2 e Assalto subito fino a 3 round, Mura -2.", [opz("si", "Gioca Sorpresa"), opz("no", "No")])
-			if rr == "si":
-				tenute[s].erase(sorpresa)
-				_scarta_evento(sorpresa)
-				loc[v]["assedio"] = 2
-				loc[v]["assedio_l"] = s
-				log_msg("SORPRESA! %s piomba su %s." % [nome(id), lnome(v)])
-				await assalto(v, s, id, 3, -2)
-				return "fine"
+		if await _sorpresa(id, v):
+			return "fine"
 		loc[v]["assedio"] = maxi(loc[v]["assedio"], n)
 		loc[v]["assedio_l"] = s
 		for x in fuori_in(v, s):
