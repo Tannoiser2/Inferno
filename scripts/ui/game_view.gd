@@ -246,8 +246,8 @@ func _build() -> void:
 	var vista := UI.button("Vista iniziale", 200, 42, 18)
 	vista.pressed.connect(func():
 		batt3d.yaw = 0.0
-		batt3d.pitch = 0.8
-		batt3d.dist = 5.0
+		batt3d.pitch = 0.62
+		batt3d.dist = 4.1
 		batt3d.target = Vector3(0, 0, 0.15)
 		batt3d._cam())
 	br.add_child(vista)

@@ -23,6 +23,9 @@ const ANIM := {"corsa": ["corsa", "run", "gallop", "walk", "cammina", "marcia"],
 signal toccato(h: String, u: String)
 
 static var _mini_cache := {}
+static var _n_mini := 0
+## Le miniature di Stefano guardano verso +Z, tranne i cavalli girati di fianco (gradi attorno all'asse Y).
+const ROT_MINI := {"cav": 90.0, "ritter": 90.0, "ritter_b": 90.0}
 
 var e
 var b: Dictionary = {}
@@ -36,8 +39,8 @@ var proiettili := []
 var muro_x := 0.0
 var _t := 0.0
 var yaw := 0.0
-var pitch := 0.8
-var dist := 5.0
+var pitch := 0.62
+var dist := 4.1
 var target := Vector3(0, 0, 0.15)
 var _touches := {}
 var _pinch := {}
@@ -124,8 +127,8 @@ func inizia(bb: Dictionary) -> void:
 	reparti.clear()
 	proiettili.clear()
 	yaw = 0.0
-	pitch = 0.8
-	dist = 5.0
+	pitch = 0.62
+	dist = 4.1
 	target = Vector3(0, 0, 0.15)
 	_cam()
 	_terreno(b["loc"])
@@ -195,7 +198,11 @@ func _terreno(l: String) -> void:
 
 func _fortezza(l: String, d: float) -> void:
 	var t: String = D.LOCALI[l]["tipo"]
-	var sc: PackedScene = load(MODELLI.get(t, MODELLI["castello"]))
+	var path: String = MODELLI.get(t, MODELLI["castello"])
+	var pb := path.replace(".glb", "_b.glb")
+	if hash(l) % 2 == 1 and ResourceLoader.exists(pb):
+		path = pb
+	var sc: PackedScene = load(path)
 	var n: Node3D = sc.instantiate()
 	var ab := _aabb(n, Transform3D.IDENTITY)
 	var k := 1.3 / maxf(ab.size.x, 0.001)
@@ -324,7 +331,7 @@ func _nuovo_reparto(h: String, s: int) -> void:
 	lbl.outline_size = 12
 	lbl.outline_modulate = Color(0.08, 0.05, 0.03, 0.95)
 	lbl.modulate = D.COL_LATO[s].lightened(0.55)
-	lbl.position = Vector3(0, 0.48 if h != GUARN else 0.3, 0)
+	lbl.position = Vector3(0, 0.5 if h != GUARN else 0.34, 0)
 	lbl.no_depth_test = true
 	nodo.add_child(lbl)
 	r["lbl"] = lbl
@@ -360,11 +367,11 @@ func _posto(h: String, i: int, n: int) -> Vector3:
 	if h == GUARN:
 		var per := maxi(1, n)
 		return Vector3(0, 0, (i - (per - 1) * 0.5) * minf(0.11, 1.5 / per))
-	var per_fila := 6
+	var per_fila := 4
 	var col := i % per_fila
 	var fila := i / per_fila
 	var nf := mini(n - fila * per_fila, per_fila)
-	return Vector3(-d * 0.2 + d * fila * 0.15, 0, (col - (nf - 1) * 0.5) * 0.12)
+	return Vector3(-d * 0.15 + d * fila * 0.17, 0, (col - (nf - 1) * 0.5) * 0.15)
 
 
 func _allinea_numero(h: String, subito := false) -> void:
@@ -455,17 +462,17 @@ func _miniatura(u: String, s: int) -> Node3D:
 	corpo.name = "corpo"
 	corpo.position.y = 0.012
 	root.add_child(corpo)
-	var path := "res://assets/miniature/%s.glb" % u
-	if not _mini_cache.has(u):
-		_mini_cache[u] = load(path) if ResourceLoader.exists(path) else null
-	if _mini_cache[u] != null:
-		var n: Node3D = _mini_cache[u].instantiate()
-		var ab := _aabb(n, Transform3D.IDENTITY)
-		var k := (0.2 if cav else 0.16) / maxf(ab.size.y, 0.001)
-		n.scale = Vector3.ONE * k
-		n.position = -Vector3(ab.position.x + ab.size.x * 0.5, ab.position.y, ab.position.z + ab.size.z * 0.5) * k
-		corpo.add_child(n)
-		var ap := _trova_ap(n)
+	var sc := _scena_mini(u)
+	if sc != null:
+		var piv := Node3D.new()
+		piv.rotation.y = deg_to_rad(float(ROT_MINI.get(sc.resource_path.get_file().get_basename(), 0.0)))
+		piv.add_child(sc.instantiate())
+		var ab := _aabb(piv, Transform3D.IDENTITY)
+		var k := (0.27 if cav else 0.22) / maxf(ab.size.y, 0.001)
+		piv.scale = Vector3.ONE * k
+		piv.position = -Vector3(ab.position.x + ab.size.x * 0.5, ab.position.y, ab.position.z + ab.size.z * 0.5) * k
+		corpo.add_child(piv)
+		var ap := _trova_ap(piv)
 		if ap != null:
 			root.set_meta("ap", ap)
 			_anim(root, "riposo")
@@ -474,6 +481,22 @@ func _miniatura(u: String, s: int) -> Node3D:
 	root.set_meta("passo", false)
 	root.set_meta("fase", randf() * TAU)
 	return root
+
+
+## La scena della miniatura di un'unità: <unità>.glb, alternata con <unità>_b.glb se c'è (varietà nei reparti).
+func _scena_mini(u: String) -> PackedScene:
+	if not _mini_cache.has(u):
+		var lista := []
+		for nome_f in [u, u + "_b"]:
+			var path := "res://assets/miniature/%s.glb" % nome_f
+			if ResourceLoader.exists(path):
+				lista.append(load(path))
+		_mini_cache[u] = lista
+	var l: Array = _mini_cache[u]
+	if l.is_empty():
+		return null
+	_n_mini += 1
+	return l[_n_mini % l.size()]
 
 
 func _trova_ap(n: Node) -> AnimationPlayer:

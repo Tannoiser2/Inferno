@@ -1,20 +1,20 @@
-Miniature per la battaglia 3D (scripts/ui/battaglia_3d.gd).
+Miniature per la battaglia 3D (scripts/ui/battaglia_3d.gd), ricavate dai modelli in Desktop/Ludoteca/Inferno/3D
+e alleggerite per il web (circa 5000 triangoli, texture 512).
 
-Un file .glb per tipo di unità, con questi nomi:
-  ritter.glb     Ritter (cavalleria pesante tedesca)
-  cav.glb        Cavalieri
-  berr.glb       Berrovieri
-  cl.glb         Cavalleria leggera
-  uia.glb        Uomini in Armi
-  arm.glb        Armigeri (anche balestrieri)
-  mil.glb        Milizia (arcieri)
-  vill.glb       Villici
+  ritter.glb, ritter_b.glb   Ritter (due versioni, alternate nei reparti)
+  cav.glb                    Cavalieri
+  berr.glb                   Berrovieri
+  cl.glb                     Cavalleria leggera (Light Horse)
+  uia.glb                    Uomini in Armi (Men at Arms)
+  arm.glb                    Armigeri (balestrieri)
+  mil.glb                    Milizia
+  vill.glb                   Villici
 
-- La miniatura viene ridimensionata da sola (fanti più bassi dei cavalieri) e appoggiata sulla basetta
-  nel colore della fazione; deve guardare verso +Z (come esce da Meshy/Blender in glTF).
-- Se il modello ha animazioni, vengono usate quelle con nomi che contengono:
-  corsa / run / walk / gallop   (quando si muove o carica)
-  attacco / attack / shoot      (quando tira o colpisce)
-  morte / death / die           (quando va in rotta)
-  riposo / idle                 (fermo)
+- Un file <unità>_b.glb, se c'è, si alterna con <unità>.glb per dare varietà al reparto.
+- La miniatura viene ridimensionata da sola e appoggiata sulla basetta nel colore della fazione; deve guardare
+  verso +Z. Se guarda altrove, si corregge in ROT_MINI (gradi attorno all'asse verticale): Cavalieri e Ritter
+  sono girati di 90 gradi.
+- Se il modello ha animazioni, si usano quelle con nomi che contengono corsa/run/walk/gallop (movimento),
+  attacco/attack/shoot (tiro e colpo), morte/death/die (rotta), riposo/idle (fermo). Senza animazioni le
+  miniature si muovono lo stesso (passo, carica, tiro, caduta).
 - Se un file manca si usa la miniatura semplice disegnata dal gioco.
