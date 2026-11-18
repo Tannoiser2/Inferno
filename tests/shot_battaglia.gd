@@ -20,8 +20,8 @@ func _run() -> void:
 	var g = main.current
 	g.engine.fx.connect(func(k, _d):
 		if k == "battaglia_inizio":
-			g.engine.anim = 1.0
-			g.engine.ai_delay = 0.3)
+			g.engine.anim = 2.5
+			g.engine.ai_delay = 0.15)
 	var t0 := Time.get_ticks_msec()
 	while g.engine.battaglia.is_empty():
 		await process_frame
@@ -29,7 +29,6 @@ func _run() -> void:
 			print("INFTEST nessuna battaglia")
 			quit(1)
 			return
-	g.engine.anim = 1.0
 	print("INFTEST battaglia ", g.engine.battaglia["tipo"], " a ", g.engine.battaglia["loc"])
 	await create_timer(1.0).timeout
 	var bt = g.batt3d
@@ -37,6 +36,7 @@ func _run() -> void:
 	for i in 40:
 		await create_timer(0.35).timeout
 		root.get_viewport().get_texture().get_image().save_png("%s/b%02d.png" % [dir, i])
+		print("INFTEST pannello ", i, " ", g.battle_panel.visible)
 		if g.engine.battaglia.is_empty():
 			break
 	g.engine.abort = true

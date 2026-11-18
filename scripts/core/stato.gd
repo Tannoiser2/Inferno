@@ -22,6 +22,8 @@ var ais: Array = []
 var online = null
 var ai_delay := 0.5
 var anim := 1.0
+## Mostrare le battaglie in 3D (solo il ritmo della partita: non cambia le regole né l'online).
+var mostra_battaglie := true
 var headless := false
 var abort := false
 var rng := RandomNumberGenerator.new()
@@ -108,6 +110,17 @@ func _pace(sec: float) -> void:
 	if replay_i < replay.size():
 		return
 	await get_tree().create_timer(sec / anim).timeout
+
+
+## Pause delle battaglie: con la scena visibile hanno il loro ritmo (anche se l'IA va veloce),
+## con le battaglie spente non si aspetta.
+func _pace_b(sec: float) -> void:
+	if not mostra_battaglie:
+		return
+	var a := anim
+	anim = minf(maxf(anim, 0.0), 1.25) if anim > 0.0 else 0.0
+	await _pace(sec)
+	anim = a
 
 
 func decide(side: int, req: Dictionary):

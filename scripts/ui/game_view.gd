@@ -30,6 +30,8 @@ var fase_lbl: Label
 var battle_panel: PanelContainer
 var battle_box: VBoxContainer
 var batt3d: Control
+var batt_btn: Button
+const IMPOSTAZIONI := "user://impostazioni.cfg"
 var batt_titolo: Label
 var batt_log: Label
 var banner: Label
@@ -144,6 +146,13 @@ func _build() -> void:
 			b.custom_minimum_size.x = 48
 		b.pressed.connect(it[1])
 		vb.add_child(b)
+	# accende e spegne la scena delle battaglie (ricordato fra una partita e l'altra)
+	engine.mostra_battaglie = _imp_battaglie()
+	batt_btn = UI.button("", 0, 48, 19)
+	batt_btn.custom_minimum_size.x = 168
+	batt_btn.pressed.connect(func(): _set_battaglie(not engine.mostra_battaglie))
+	vb.add_child(batt_btn)
+	_testo_batt_btn()
 	fase_lbl = UI.label("", 22, UI.ORO_L, UI.font_head)
 	fase_lbl.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
 	fase_lbl.add_theme_constant_override("shadow_offset_x", 2)
@@ -551,23 +560,28 @@ func _on_fx(kind: String, d: Dictionary) -> void:
 			_banner("Chiamata alle Armi!")
 		"battaglia_inizio":
 			_battaglia_mostra()
-			batt3d.inizia(d)
+			if engine.mostra_battaglie:
+				batt3d.inizia(d)
 			mappa2d.flash[d["loc"]] = 1.5
 		"battaglia_fine":
 			_battaglia_refresh()
-			batt3d.fine(d)
+			if engine.mostra_battaglie:
+				batt3d.fine(d)
 			var bp := battle_panel
 			get_tree().create_timer(4.0 if not e.headless else 0.0).timeout.connect(func():
 				if is_instance_valid(bp) and (e.battaglia.is_empty() or e.battaglia.get("esito", "") != ""):
 					bp.visible = false)
 		"battaglia_attacco":
-			batt3d.attacco(d)
+			if engine.mostra_battaglie:
+				batt3d.attacco(d)
 		"battaglia_colpi":
 			_battaglia_refresh()
-			batt3d.esiti(d)
+			if engine.mostra_battaglie:
+				batt3d.esiti(d)
 		"battaglia_round":
 			_battaglia_refresh()
-			batt3d.sincronizza()
+			if engine.mostra_battaglie:
+				batt3d.sincronizza()
 		"battaglia_riga":
 			_battaglia_refresh()
 		"resa":
@@ -621,8 +635,38 @@ func _mostra_carta(c: String) -> void:
 # ================================================================ battaglia
 
 func _battaglia_mostra() -> void:
+	if not engine.mostra_battaglie:
+		return
 	battle_panel.visible = true
 	_battaglia_refresh()
+
+
+func _imp_battaglie() -> bool:
+	var c := ConfigFile.new()
+	if c.load(IMPOSTAZIONI) != OK:
+		return true
+	return bool(c.get_value("vista", "battaglie", true))
+
+
+func _testo_batt_btn() -> void:
+	batt_btn.text = "Battaglie: sì" if engine.mostra_battaglie else "Battaglie: no"
+
+
+func _set_battaglie(on: bool) -> void:
+	engine.mostra_battaglie = on
+	var c := ConfigFile.new()
+	c.load(IMPOSTAZIONI)
+	c.set_value("vista", "battaglie", on)
+	c.save(IMPOSTAZIONI)
+	_testo_batt_btn()
+	toast("Battaglie in 3D accese: si vedono tutte, anche quelle dell'IA." if on else "Battaglie in 3D spente: l'esito si legge nel diario.")
+	var b: Dictionary = engine.battaglia
+	if on and not b.is_empty() and b.get("esito", "") == "":
+		battle_panel.visible = true
+		batt3d.inizia(b)
+		_battaglia_refresh()
+	elif not on:
+		battle_panel.visible = false
 
 
 func _battaglia_refresh() -> void:

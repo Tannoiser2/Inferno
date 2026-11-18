@@ -267,9 +267,9 @@ func _riga(t: String) -> void:
 
 func _combatti() -> int:
 	var b := battaglia
-	await _pace(1.6)
+	await _pace_b(1.6)
 	await _eventi_inizio()
-	await _pace(0.8)
+	await _pace_b(0.8)
 	while true:
 		b["round"] += 1
 		var r: int = b["round"]
@@ -308,7 +308,7 @@ func _combatti() -> int:
 			return await _fine(b["dif"])
 		if r >= 12:
 			return await _fine(b["dif"])
-		await _pace(0.6)
+		await _pace_b(0.6)
 	return b["dif"]
 
 
@@ -663,10 +663,10 @@ func _fase(tipo: String, s: int, r: int) -> void:
 				_riga("%d colpi rimasti passano a %s." % [colpi, "la guarnigione" if t == GUARN else nome(t)])
 			# la scena della battaglia anima il tiro o la carica, poi si vedono gli esiti
 			fx.emit("battaglia_attacco", {"tipo": tipo, "s": s, "da": g["da"].duplicate(), "t": t, "colpi": colpi, "bal": bal, "sortita": g["sortita"]})
-			await _pace(1.3 if primo else 0.7)
+			await _pace_b(1.3 if primo else 0.7)
 			var res := await _applica_colpi(t, colpi, bal, scelta_att, g["sortita"], mura_ok)
 			fx.emit("battaglia_colpi", {"t": t, "n": colpi, "esiti": res["esiti"], "tipo": tipo})
-			await _pace(clampf(0.5 + 0.18 * res["esiti"].size(), 0.6, 2.0))
+			await _pace_b(clampf(0.5 + 0.18 * res["esiti"].size(), 0.6, 2.0))
 			colpi = res["resto"]
 			bal = res["resto_bal"]
 			mura_ok = false
@@ -1100,7 +1100,7 @@ func _fine(vince: int) -> int:
 	b["esito"] = D.LATI[vince]
 	_riga("Vincono i %s." % D.LATI[vince])
 	fx.emit("battaglia_fine", b)
-	await _pace(0.8)
+	await _pace_b(0.8)
 	var rimossi := []
 	var lasciato: bool = b["lascia"] == perde
 	if b["tipo"] == "assalto":
