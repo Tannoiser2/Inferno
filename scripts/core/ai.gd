@@ -20,6 +20,16 @@ var strategia := true
 const CONSIGLI_SCELTI := ["concentra"]
 var consigli := CONSIGLI_SCELTI.duplicate()
 
+## Simulazione: per le decisioni importanti l'IA prova le mosse migliori (secondo le sue regole) giocando avanti
+## la partita più volte, con dadi e futuro diversi, fino alla fine del turno, e sceglie quella che rende di più.
+var simula := false
+const SIM_K := ["azione", "avvicinamento", "assedia", "tradimento_az", "evento", "lascia"]
+var sim_candidati := 3
+var sim_prove := 6
+var sim_ms := 2500
+const SIM_MARGINE := 0.4
+var sim_ultimo := {}          # statistiche dell'ultima simulazione (per i test e il tutor)
+
 
 func _c(k: String) -> bool:
 	return strategia and (consigli.is_empty() or k in consigli)
@@ -740,3 +750,110 @@ func _sede(e, s: int, req: Dictionary) -> String:
 			bv = v
 			best = l
 	return best
+
+
+# ================================================================ simulazione
+
+## Le mosse candidate: per le azioni le migliori secondo le regole; per le altre scelte tutte (al massimo 4).
+func _candidati(e, s: int, req: Dictionary, best: String) -> Array:
+	var o: Array = req["opzioni"]
+	var out := [best]
+	if req.get("k", "") == "azione":
+		var id: String = req["sig"]
+		var lista := []
+		for x in o:
+			lista.append([_valuta(e, s, id, x), str(x["id"])])
+		lista.sort_custom(func(a, b): return a[0] > b[0])
+		for v in lista:
+			if out.size() >= sim_candidati:
+				break
+			if not v[1] in out:
+				out.append(v[1])
+	else:
+		for x in o:
+			if out.size() >= 4:
+				break
+			if not str(x["id"]) in out:
+				out.append(str(x["id"]))
+	return out
+
+
+## Quanto è buona per la parte s la situazione alla fine della simulazione.
+static func valuta_stato(x, s: int) -> float:
+	var v: float = x.pv(s) - x.pv(1 - s)
+	for k in [s, 1 - s]:
+		var segno := 1.0 if k == s else -1.0
+		for id in x.signori_mappa(k):
+			v += segno * (0.35 + x.forza(id) * 0.05 + clampf(x.L[id]["svc"] - x.turno, 0, 3) * 0.1)
+	if x.over and not x.result.is_empty():
+		var w: int = int(x.result.get("vince", -1))
+		if w == s:
+			v += 2.0
+		elif w == 1 - s:
+			v -= 2.0
+	return v
+
+
+## Se questa decisione va provata con la simulazione (l'IA esperta, nelle decisioni importanti).
+func vuole_simulare(e, req: Dictionary, best) -> bool:
+	if not simula or e.in_sim or e.online != null or best == null:
+		return false
+	return req.get("type", "") == "scelta" and str(req.get("k", "")) in SIM_K and req.get("opzioni", []).size() > 1
+
+
+## Prova le mosse candidate giocando avanti la partita. Fra una prova e l'altra lascia respirare l'interfaccia.
+func prova_mosse(e, s: int, req: Dictionary, best0) -> String:
+	var best := str(best0)
+	var cand := _candidati(e, s, req, best)
+	if cand.size() < 2:
+		return best
+	var t0 := Time.get_ticks_msec()
+	var somma := {}
+	var n := {}
+	for c in cand:
+		somma[c] = 0.0
+		n[c] = 0
+	var semi := []
+	for i in sim_prove:
+		semi.append(hash([e.seme, e.record.size(), i]))
+	var fatte := 0
+	for i in sim_prove:
+		for c in cand:
+			var x := InfEngine.new()
+			x.in_sim = true
+			x.headless = true
+			# stessi posti (umani o IA) della partita vera, perché il replay segua le stesse decisioni;
+			# nella simulazione decide sempre l'IA veloce
+			var seats := []
+			for k in 2:
+				seats.append({"name": "", "ai": bool(e.players[k].get("ai", false)), "level": 2, "simula": false})
+			x.setup({"scen": e.scen, "seed": e.seme, "seats": seats, "replay": e.record.duplicate(), "ai_delay": 0.0, "anim": 0.0,
+				"lezione": e.lezione})
+			x.forzata = c
+			x.sim_lato = s
+			x.sim_seme = semi[i]
+			x.limite_turno = e.turno
+			x.run()
+			if not x.sim_bivio_ok and OS.get_environment("INF_SIMLOG") != "":
+				print("SIM DISALLINEATA: atteso %s, trovato %s" % [req.get("k", ""), x.sim_bivio_k])
+			somma[c] += valuta_stato(x, s)
+			n[c] += 1
+			x.free()
+			if not e.headless and e.is_inside_tree():
+				await e.get_tree().process_frame
+		fatte += 1
+		if Time.get_ticks_msec() - t0 > sim_ms:
+			break
+	var scelta := best
+	# un'alternativa vince solo se rende chiaramente di più: con poche prove il caso conta molto
+	var bv: float = somma[best] / maxf(1.0, n[best]) + SIM_MARGINE
+	for c in cand:
+		var m: float = somma[c] / maxf(1.0, n[c])
+		if m > bv:
+			bv = m
+			scelta = c
+	sim_ultimo = {"k": req.get("k", ""), "cand": cand, "medie": cand.map(func(c): return somma[c] / maxf(1.0, n[c])), "prove": fatte,
+		"ms": Time.get_ticks_msec() - t0, "scelta": scelta, "regola": best}
+	if OS.get_environment("INF_SIMLOG") != "":
+		print("SIM t%d %s %s -> %s (regola %s) prove %d ms %d" % [e.turno, req.get("k", ""), str(sim_ultimo["medie"].map(func(v): return snappedf(v, 0.01))), scelta, best, fatte, sim_ultimo["ms"]])
+	return scelta

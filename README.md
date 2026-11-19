@@ -26,7 +26,11 @@ Si gioca nel browser: https://tannoiser2.github.io/inferno/ (e dalla ludoteca ht
   del tutor» con la mossa dell'IA esperta spiegata) e la *battaglia guidata* (una battaglia campale e un Assalto
   preparati). Il manuale **Strategie** raccoglie i consigli dei resoconti di partita di Volko Ruhnke e Christophe
   Correia (InsideGMT, The Boardgames Chronicle).
-- **Avversario IA** in tre livelli (facile, normale, esperta) per una o entrambe le fazioni.
+- **Avversario IA** in tre livelli (facile, normale, esperta) per una o entrambe le fazioni. L'IA **esperta**, nelle
+  decisioni importanti (azioni, assedi, avvicinamenti, battaglie, Tradimenti, Eventi), prova in anticipo le mosse
+  migliori giocando avanti la partita più volte fino alla fine del turno, con dadi e futuro diversi e senza sbirciare
+  il piano segreto dell'avversario (le sue carte vengono rimescolate). Contro l'IA esperta senza simulazione vince il
+  63% delle partite (100 partite negli scenari A-E, +1 Punto Vittoria in media).
 - **Due persone sullo stesso dispositivo**: le scelte segrete si fanno passandosi il dispositivo.
 - **Online** con un amico (stanza con codice di 4 lettere) e **partite salvate** su Firebase
   (codice di 6 lettere, si riprendono da qualsiasi dispositivo).

@@ -32,6 +32,17 @@ var rng := RandomNumberGenerator.new()
 var replay: Array = []
 var replay_i := 0
 var record: Array = []
+## Simulazioni dell'IA: una copia della partita, ricostruita rigiocando le decisioni (replay), alla prima decisione
+## nuova riceve la mossa da provare («forzata»), poi rimescola il futuro (dadi, mazzi, piano nemico) e prosegue
+## con l'IA veloce fino a limite_turno.
+var seme := 0
+var in_sim := false
+var sim_lato := -1
+var sim_seme := 0
+var forzata = null
+var limite_turno := 99
+var sim_bivio_k := ""
+var sim_bivio_ok := false
 var log_lines: Array = []
 
 # --- partita
@@ -135,14 +146,24 @@ func decide(side: int, req: Dictionary):
 	if replay_i < replay.size():
 		r = replay[replay_i]
 		replay_i += 1
+	elif forzata != null:
+		r = forzata
+		forzata = null
+		sim_bivio_k = str(req.get("k", req.get("type", "")))
+		sim_bivio_ok = req.has("opzioni") and req["opzioni"].any(func(o): return str(o["id"]) == str(r))
+		_al_bivio()
 	elif abort:
 		r = ais[side].decide(self, side, req)
 	elif online != null:
 		r = await online.decide(self, side, req)
+	elif in_sim:
+		r = ais[side].decide(self, side, req)
 	elif players[side]["ai"]:
 		if ai_delay > 0.0 and not headless and is_inside_tree():
 			await get_tree().create_timer(ai_delay).timeout
 		r = ais[side].decide(self, side, req)
+		if ais[side].vuole_simulare(self, req, r):
+			r = await ais[side].prova_mosse(self, side, req, r)
 	else:
 		decision_requested.emit(req)
 		r = await decision_provided
@@ -150,6 +171,24 @@ func decide(side: int, req: Dictionary):
 			r = ais[side].decide(self, side, req)
 	record.append(r)
 	return r
+
+
+## Il punto della simulazione da cui il futuro diventa sconosciuto: dadi nuovi, mazzi rimescolati e, per chi
+## simula, le carte non ancora girate del piano nemico in ordine casuale (il piano nemico è segreto).
+func _al_bivio() -> void:
+	rng.seed = sim_seme
+	for k in 2:
+		_mescola(mazzo_aow[k])
+	if sim_lato >= 0:
+		_mescola(piano[1 - sim_lato])
+
+
+func _mescola(a: Array) -> void:
+	for i in range(a.size() - 1, 0, -1):
+		var j := rng.randi_range(0, i)
+		var t = a[i]
+		a[i] = a[j]
+		a[j] = t
 
 
 func provide_decision(r) -> void:

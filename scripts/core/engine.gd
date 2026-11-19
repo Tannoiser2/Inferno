@@ -20,6 +20,7 @@ func setup(cfg: Dictionary) -> void:
 		rng.seed = int(cfg["seed"])
 	else:
 		rng.randomize()
+	seme = rng.seed
 	ai_delay = float(cfg.get("ai_delay", 0.5))
 	anim = float(cfg.get("anim", 1.0))
 	replay = cfg.get("replay", [])
@@ -29,6 +30,8 @@ func setup(cfg: Dictionary) -> void:
 		var a := InfAI.new()
 		a.level = int(players[s].get("level", 1))
 		a.strategia = bool(players[s].get("strategia", true))
+		# l'IA esperta prova in anticipo le mosse importanti simulando la partita (mai dentro una simulazione)
+		a.simula = bool(players[s].get("simula", a.level >= 2)) and not in_sim
 		if players[s].has("consigli"):
 			a.consigli = players[s]["consigli"]
 		ais[s] = a
@@ -144,6 +147,9 @@ func run() -> void:
 			break
 		await _fine_campagna()
 		if over or abort:
+			break
+		if turno >= limite_turno:
+			abort = true
 			break
 		turno += 1
 		prima_leva = false
